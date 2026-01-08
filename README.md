@@ -13,7 +13,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 
 ## 📸 Screenshots
 
-*Coming soon - Add your gameplay screenshots here!*
+*Coming soon*
 
 ---
 
@@ -93,7 +93,7 @@ Simply visit **[itzmorphinetime.github.io/MorphWars](https://itzmorphinetime.git
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_GITHUB_USERNAME/Game.git
+   git clone https://github.com/ItzMorphineTime/MorphWars.git
    cd Game
    ```
 
@@ -282,7 +282,7 @@ This project is licensed under the Apache License - see the [LICENSE](LICENSE) f
 
 Have questions or suggestions? Feel free to:
 - Open an issue on GitHub
-- Reach out via [your contact method]
+- Reach out via [Contact](https://joeloe.co.uk/)
 
 ---
 
@@ -296,6 +296,6 @@ If you enjoyed this project, please consider:
 
 ---
 
-**[🎮 Start Playing Now!](https://YOUR_GITHUB_USERNAME.github.io/Game/)**
+**[🎮 Start Playing Now!](https://itzmorphinetime.github.io/MorphWars/)**
 
 *Made with ❤️ and JavaScript*
