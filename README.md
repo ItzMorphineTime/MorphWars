@@ -1,7 +1,7 @@
 # 🎮 Morph Wars - RTS Game
 
 [![Play Now](https://img.shields.io/badge/Play-Now-brightgreen?style=for-the-badge)](https://itzmorphinetime.github.io/MorphWars/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-yellow.svg?style=flat-square&logo=javascript)](https://www.javascript.com/)
 [![No Dependencies](https://img.shields.io/badge/Dependencies-None-success.svg?style=flat-square)](package.json)
 
