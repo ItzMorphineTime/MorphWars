@@ -1,0 +1,6 @@
+@echo off
+echo Starting Command ^& Conquer RTS Game...
+echo.
+echo Opening index.html in your default browser...
+echo.
+start "" "index.html"
