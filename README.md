@@ -1,11 +1,11 @@
-# 🎮 Command & Conquer - RTS Game
+# 🎮 Morph Wars - RTS Game
 
 [![Play Now](https://img.shields.io/badge/Play-Now-brightgreen?style=for-the-badge)](https://YOUR_GITHUB_USERNAME.github.io/Game/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-yellow.svg?style=flat-square&logo=javascript)](https://www.javascript.com/)
 [![No Dependencies](https://img.shields.io/badge/Dependencies-None-success.svg?style=flat-square)](package.json)
 
-A feature-rich, real-time strategy game inspired by Command & Conquer, built entirely with vanilla JavaScript and HTML5 Canvas. No frameworks, no dependencies—just pure, performant gameplay.
+A feature-rich, real-time strategy game, built entirely with vanilla JavaScript and HTML5 Canvas. No frameworks, no dependencies—just pure, performant gameplay.
 
 **[🕹️ Play the Game Here](https://itzmorphinetime.github.io/MorphWars/)**
 
