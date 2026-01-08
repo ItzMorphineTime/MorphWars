@@ -7,7 +7,7 @@
 
 A feature-rich, real-time strategy game inspired by Command & Conquer, built entirely with vanilla JavaScript and HTML5 Canvas. No frameworks, no dependencies—just pure, performant gameplay.
 
-**[🕹️ Play the Game Here](https://YOUR_GITHUB_USERNAME.github.io/Game/)** ← *Update this link with your GitHub Pages URL*
+**[🕹️ Play the Game Here](https://itzmorphinetime.github.io/MorphWars/)**
 
 ---
 
@@ -87,7 +87,7 @@ A feature-rich, real-time strategy game inspired by Command & Conquer, built ent
 ## 🚀 Getting Started
 
 ### Play Online
-Simply visit **[your-github-username.github.io/Game](https://YOUR_GITHUB_USERNAME.github.io/Game/)** to play instantly in your browser!
+Simply visit **[itzmorphinetime.github.io/MorphWars](https://itzmorphinetime.github.io/MorphWars/)** to play instantly in your browser!
 
 ### Run Locally
 
