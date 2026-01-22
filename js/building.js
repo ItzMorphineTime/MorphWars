@@ -109,7 +109,13 @@ class Building extends Entity {
 
         if (this.currentProduction) {
             // Check if spawn location is available - pause if blocked
-            const spawnAvailable = this.findSpawnLocation(game) !== null;
+            // For PORT buildings producing naval units, check water spawn location
+            let spawnAvailable = false;
+            if (this.type === 'PORT' && this.currentProduction.stats.category === 'naval') {
+                spawnAvailable = this.findWaterSpawnLocation(game) !== null;
+            } else {
+                spawnAvailable = this.findSpawnLocation(game) !== null;
+            }
             if (!spawnAvailable) {
                 // Pause production - don't increment progress
                 return;
@@ -136,8 +142,15 @@ class Building extends Entity {
     }
 
     spawnUnit(unitData, game) {
-        // Find spawn location near building
-        const spawnTile = this.findSpawnLocation(game);
+        // For PORT buildings producing naval units, use findWaterSpawnLocation
+        // For other buildings, use findSpawnLocation
+        let spawnTile = null;
+        if (this.type === 'PORT' && unitData.stats.category === 'naval') {
+            spawnTile = this.findWaterSpawnLocation(game);
+        } else {
+            spawnTile = this.findSpawnLocation(game);
+        }
+        
         if (!spawnTile) {
             // Re-queue if no space
             this.productionQueue.unshift(unitData);
@@ -156,7 +169,24 @@ class Building extends Entity {
             return;
         }
 
-        const spawnPos = tileToWorld(spawnTile.x, spawnTile.y);
+        // For naval units, spawn on water if PORT
+        let spawnPos;
+        let spawnTileForNaval = null;
+        if (this.type === 'PORT' && unitData.stats.category === 'naval') {
+            // Find water tile adjacent to port or on port itself
+            const waterTile = this.findWaterSpawnLocation(game);
+            if (waterTile) {
+                spawnPos = tileToWorld(waterTile.x, waterTile.y);
+                spawnTileForNaval = waterTile;
+            } else {
+                // No water tile found - this shouldn't happen for PORT, but fallback
+                spawnPos = tileToWorld(spawnTile.x, spawnTile.y);
+                spawnTileForNaval = spawnTile;
+            }
+        } else {
+            spawnPos = tileToWorld(spawnTile.x, spawnTile.y);
+        }
+        
         const unit = new Unit(spawnPos.x, spawnPos.y, unitData.type, unitData.stats, this.owner);
 
         // Airplane-specific: assign home airfield and check limit
@@ -182,7 +212,7 @@ class Building extends Entity {
             unit.landed = true;
             unit.velocity.x = 0;
             unit.velocity.y = 0;
-            // Update map position
+            // Update map position for airplane
             const airfieldTile = worldToTile(this.x, this.y);
             game.map.setUnit(airfieldTile.x, airfieldTile.y, unit);
         } else {
@@ -191,7 +221,34 @@ class Building extends Entity {
         }
 
         game.units.push(unit);
-        game.map.setUnit(spawnTile.x, spawnTile.y, unit);
+        
+        // Set unit on map - naval units need to be placed on water tiles
+        if (unit.isAirplane) {
+            // Already set above
+        } else if (unit.stats.category === 'naval') {
+            // Naval units: use the water tile we found, or find nearest water tile
+            if (spawnTileForNaval && game.map.isWater(spawnTileForNaval.x, spawnTileForNaval.y)) {
+                game.map.setUnit(spawnTileForNaval.x, spawnTileForNaval.y, unit);
+            } else {
+                // Fallback: find nearest water tile
+                const finalSpawnTile = worldToTile(unit.x, unit.y);
+                if (game.map.isWater(finalSpawnTile.x, finalSpawnTile.y)) {
+                    game.map.setUnit(finalSpawnTile.x, finalSpawnTile.y, unit);
+                } else {
+                    // Find nearest water tile
+                    const waterTile = this.findWaterSpawnLocation(game);
+                    if (waterTile) {
+                        unit.x = tileToWorld(waterTile.x, waterTile.y).x;
+                        unit.y = tileToWorld(waterTile.x, waterTile.y).y;
+                        game.map.setUnit(waterTile.x, waterTile.y, unit);
+                    }
+                }
+            }
+        } else {
+            // Non-naval units
+            const finalSpawnTile = worldToTile(unit.x, unit.y);
+            game.map.setUnit(finalSpawnTile.x, finalSpawnTile.y, unit);
+        }
 
         // Track stats for human player
         if (this.owner === game.humanPlayer && game.stats) {
@@ -225,6 +282,55 @@ class Building extends Entity {
             }
         }
 
+        return null;
+    }
+
+    findWaterSpawnLocation(game) {
+        // For PORT, find water tile adjacent to building or on building itself (since PORT allows units on top)
+        const tiles = [];
+        
+        // First, check if PORT itself is on water tiles (if built on water)
+        for (let x = this.tileX; x < this.tileX + this.stats.width; x++) {
+            for (let y = this.tileY; y < this.tileY + this.stats.height; y++) {
+                if (game.map.isWater(x, y)) {
+                    // Check if tile is free (no unit)
+                    const tile = game.map.getTile(x, y);
+                    if (tile && !tile.unit) {
+                        tiles.push({ x, y });
+                    }
+                }
+            }
+        }
+        
+        // Also check perimeter for water tiles
+        for (let x = this.tileX - 2; x <= this.tileX + this.stats.width + 1; x++) {
+            for (let y = this.tileY - 2; y <= this.tileY + this.stats.height + 1; y++) {
+                // Skip tiles that are part of the building (already checked above)
+                if (x >= this.tileX && x < this.tileX + this.stats.width && 
+                    y >= this.tileY && y < this.tileY + this.stats.height) {
+                    continue;
+                }
+                if (game.map.isWater(x, y)) {
+                    const tile = game.map.getTile(x, y);
+                    if (tile && !tile.unit) {
+                        tiles.push({ x, y });
+                    }
+                }
+            }
+        }
+        
+        // Return nearest water tile
+        if (tiles.length > 0) {
+            const centerX = this.tileX + this.stats.width / 2;
+            const centerY = this.tileY + this.stats.height / 2;
+            tiles.sort((a, b) => {
+                const distA = Math.abs(a.x - centerX) + Math.abs(a.y - centerY);
+                const distB = Math.abs(b.x - centerX) + Math.abs(b.y - centerY);
+                return distA - distB;
+            });
+            return tiles[0];
+        }
+        
         return null;
     }
 
@@ -315,7 +421,7 @@ class Building extends Entity {
 
         damage = Math.floor(damage);
 
-        const destroyed = target.takeDamage(damage);
+        const destroyed = target.takeDamage(damage, game);
 
         if (destroyed) {
             const tile = worldToTile(target.x, target.y);

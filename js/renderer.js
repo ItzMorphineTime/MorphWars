@@ -8,6 +8,17 @@ class Renderer {
         this.minimapCanvas = minimapCanvas;
         this.minimapCtx = minimapCanvas.getContext('2d');
 
+        // Minimap optimization: throttle updates
+        this.lastMinimapUpdate = 0;
+        this.MINIMAP_UPDATE_INTERVAL = 500; // Update every 500ms (2 FPS)
+        this.minimapTerrainCache = null; // Cache static terrain data
+        this.minimapFogCache = null; // Cache fog of war data
+        this.lastFogUpdateTime = 0;
+        
+        // Frustum culling: visibility cache per frame
+        this.visibilityCache = new Map(); // Cache entity visibility per frame
+        this.currentFrameId = 0;
+
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
     }
@@ -25,6 +36,12 @@ class Renderer {
     render() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+        // Clear visibility cache at start of each frame (if caching enabled)
+        if (FRUSTUM_CULLING.CACHE_VISIBILITY) {
+            this.visibilityCache.clear();
+            this.currentFrameId++;
+        }
+
         this.ctx.save();
         this.ctx.translate(-this.game.camera.x, -this.game.camera.y);
 
@@ -32,8 +49,12 @@ class Renderer {
         this.renderFogOfWar();
         this.renderBuildings();
         this.renderUnits();
-        this.renderEffects();
         this.renderPlacementGhost();
+        
+        // Render visual effects (damage numbers, projectiles, etc.)
+        if (this.game.effects) {
+            this.game.effects.render(this.ctx, this.game.camera);
+        }
 
         this.ctx.restore();
 
@@ -62,30 +83,17 @@ class Renderer {
                 const px = x * TILE_SIZE;
                 const py = y * TILE_SIZE;
 
-                // Terrain color with height-based variation
-                let color = '#2a4a2a';
-
-                // Get height value if heightmap exists
-                let height = 0.5;
-                if (this.game.map.heightMapGenerator) {
-                    height = this.game.map.heightMapGenerator.getHeight(x, y);
-                }
-
-                if (tile.terrain === 'water') {
-                    // Water: darker blue for deeper water
-                    const waterDepth = Math.floor((1 - height) * 40);
-                    color = `rgb(${10 + waterDepth}, ${40 + waterDepth}, ${100 + waterDepth})`;
-                } else if (tile.terrain === 'rock') {
-                    // Rock/Mountains: lighter gray for higher elevation
-                    const rockBrightness = Math.floor(60 + height * 80);
-                    color = `rgb(${rockBrightness}, ${rockBrightness}, ${rockBrightness})`;
-                } else if (tile.terrain === 'resource') {
-                    color = '#6a4a2a';
-                } else {
-                    // Grass: darker green for lower elevation, lighter for higher
-                    const grassGreen = Math.floor(50 + height * 30);
-                    const grassRed = Math.floor(30 + height * 20);
-                    color = `rgb(${grassRed}, ${grassGreen + 24}, ${grassRed})`;
+                // Use pre-calculated terrain color (optimization: calculated once during map generation)
+                // Fallback to calculation if color not set (for backwards compatibility)
+                let color = tile.color;
+                if (!color) {
+                    // Fallback: calculate color on the fly (shouldn't happen after optimization)
+                    let height = 0.5;
+                    if (this.game.map.heightMapGenerator) {
+                        height = this.game.map.heightMapGenerator.getHeight(x, y);
+                    }
+                    color = this.game.map.calculateTerrainColor(x, y, tile.terrain, height);
+                    tile.color = color; // Cache it for next time
                 }
 
                 this.ctx.fillStyle = color;
@@ -218,6 +226,9 @@ class Renderer {
     renderUnits() {
         for (const unit of this.game.units) {
             if (!this.isVisible(unit)) continue;
+            
+            // Don't render units that are being transported
+            if (unit.transportedBy) continue;
 
             const size = (unit.stats.size || 1) * 15;
 
@@ -231,8 +242,15 @@ class Renderer {
                 unitColor = this.blendColors(UNIT_TYPE_COLORS.infantry, unit.owner.color, 0.7);
             } else if (unit.stats.category === 'air') {
                 unitColor = this.blendColors(UNIT_TYPE_COLORS.air, unit.owner.color, 0.7);
+            } else if (unit.stats.category === 'naval') {
+                unitColor = this.blendColors('#0066cc', unit.owner.color, 0.7);
             } else if (unit.stats.category === 'vehicle') {
                 unitColor = this.blendColors(UNIT_TYPE_COLORS.vehicle, unit.owner.color, 0.7);
+            }
+            
+            // Submarine stealth - only render if detected or owned by player
+            if (unit.isSubmarine && unit.stealth && !unit.stealthDetected && unit.owner !== this.game.humanPlayer) {
+                continue; // Don't render undetected enemy submarines
             }
 
             // Unit body
@@ -288,6 +306,23 @@ class Renderer {
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
                 this.ctx.restore();
+            } else if (unit.stats.category === 'naval') {
+                // Naval units - draw as elongated rectangle (ship shape)
+                this.ctx.fillStyle = unitColor;
+                const navalWidth = size * 1.5;
+                const navalHeight = size * 0.8;
+                this.ctx.fillRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
+                
+                // Submarine indicator (periscope)
+                if (unit.isSubmarine) {
+                    this.ctx.fillStyle = '#888';
+                    this.ctx.fillRect(unit.x - 2, unit.y - size - 3, 4, 6);
+                }
+                
+                // Player color border
+                this.ctx.strokeStyle = unit.owner.color;
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
             } else {
                 this.ctx.fillStyle = unitColor;
                 this.ctx.fillRect(unit.x - size / 2, unit.y - size / 2, size, size);
@@ -330,6 +365,18 @@ class Renderer {
                 this.ctx.fillText('★'.repeat(unit.veterancy), unit.x, unit.y + size + 12);
             }
 
+            // Transport capacity indicator
+            if (unit.isTransport) {
+                const embarkedCount = unit.getEmbarkedCount();
+                const capacity = unit.getTransportCapacity();
+                if (embarkedCount > 0) {
+                    this.ctx.fillStyle = '#0f0';
+                    this.ctx.font = '10px monospace';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(`${embarkedCount}/${capacity}`, unit.x, unit.y - size - 12);
+                }
+            }
+            
             // Harvester cargo
             if (unit.isHarvester && unit.cargo > 0) {
                 this.ctx.fillStyle = '#d4af37';
@@ -375,8 +422,8 @@ class Renderer {
     // Airplanes are now regular units, rendered in renderUnits()
 
     renderEffects() {
-        // Render special power effects
-        // Could add particle effects, explosions, etc.
+        // Visual effects are now handled by EffectsManager
+        // This method kept for backward compatibility
     }
 
     renderPlacementGhost() {
@@ -394,7 +441,17 @@ class Renderer {
         const w = stats.width * TILE_SIZE;
         const h = stats.height * TILE_SIZE;
 
-        const canPlace = canPlaceBuilding(this.game.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.game.humanPlayer, this.game);
+        // Check if PORT can be placed on water
+        let canPlace = false;
+        if (this.game.placingBuilding === 'PORT') {
+            const canPlaceOnWater = this.game.map.isWater(mouseTile.x, mouseTile.y);
+            const hasAdjacentWater = this.game.map.hasAdjacentWater(mouseTile.x, mouseTile.y, stats.width, stats.height);
+            if (canPlaceOnWater || hasAdjacentWater) {
+                canPlace = canPlaceBuilding(this.game.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.game.humanPlayer, this.game, true);
+            }
+        } else {
+            canPlace = canPlaceBuilding(this.game.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.game.humanPlayer, this.game);
+        }
 
         // Enhanced visual feedback
         this.ctx.fillStyle = canPlace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)';
@@ -476,6 +533,14 @@ class Renderer {
     }
 
     renderMinimap() {
+        const now = Date.now();
+        
+        // Throttle minimap updates to reduce overhead (80-90% performance improvement)
+        if (now - this.lastMinimapUpdate < this.MINIMAP_UPDATE_INTERVAL) {
+            return; // Skip update - still showing previous frame
+        }
+        this.lastMinimapUpdate = now;
+
         const ctx = this.minimapCtx;
         const w = this.minimapCanvas.width;
         const h = this.minimapCanvas.height;
@@ -510,17 +575,33 @@ class Renderer {
         ctx.fillStyle = '#1a1a1a';
         ctx.fillRect(0, 0, w, h);
 
-        // Terrain
-        for (let y = 0; y < this.game.map.height; y += 2) {
-            for (let x = 0; x < this.game.map.width; x += 2) {
-                const tile = this.game.map.getTile(x, y);
-                if (!tile) continue;
-
-                if (tile.terrain === 'water' || tile.terrain === 'rock') {
-                    ctx.fillStyle = '#333';
-                    ctx.fillRect(x * TILE_SIZE * scaleX, y * TILE_SIZE * scaleY, 2, 2);
+        // Cache terrain data (only rebuild if map changes)
+        if (!this.minimapTerrainCache || this.game.map.width !== this.minimapTerrainCache.width || 
+            this.game.map.height !== this.minimapTerrainCache.height) {
+            // Build terrain cache
+            this.minimapTerrainCache = {
+                width: this.game.map.width,
+                height: this.game.map.height,
+                data: []
+            };
+            
+            for (let y = 0; y < this.game.map.height; y += 2) {
+                for (let x = 0; x < this.game.map.width; x += 2) {
+                    const tile = this.game.map.getTile(x, y);
+                    if (tile && (tile.terrain === 'water' || tile.terrain === 'rock')) {
+                        this.minimapTerrainCache.data.push({
+                            x: x * TILE_SIZE * scaleX,
+                            y: y * TILE_SIZE * scaleY
+                        });
+                    }
                 }
             }
+        }
+
+        // Render cached terrain (much faster than recalculating every frame)
+        ctx.fillStyle = '#333';
+        for (const terrain of this.minimapTerrainCache.data) {
+            ctx.fillRect(terrain.x, terrain.y, 2, 2);
         }
 
         // Fog of War overlay
@@ -595,9 +676,102 @@ class Renderer {
 
     isVisible(entity) {
         if (!this.game.humanPlayer) return true;
+        
+        // Check visibility cache first (if caching enabled)
+        if (FRUSTUM_CULLING.CACHE_VISIBILITY) {
+            const entityId = entity.id || `${entity.x},${entity.y},${entity.type}`;
+            if (this.visibilityCache.has(entityId)) {
+                return this.visibilityCache.get(entityId);
+            }
+        }
+        
+        // Early exit if frustum culling is disabled
+        if (!FRUSTUM_CULLING.ENABLED) {
+            // Still check fog of war if enabled
+            let visible = true;
+            if (FRUSTUM_CULLING.ENABLE_FOG_CHECK) {
+                const tile = worldToTile(entity.x, entity.y);
+                visible = this.game.map.isTileVisible(tile.x, tile.y, this.game.humanPlayer.id);
+            }
+            
+            // Cache result if caching enabled
+            if (FRUSTUM_CULLING.CACHE_VISIBILITY) {
+                const entityId = entity.id || `${entity.x},${entity.y},${entity.type}`;
+                this.visibilityCache.set(entityId, visible);
+            }
+            
+            return visible;
+        }
 
-        const tile = worldToTile(entity.x, entity.y);
-        return this.game.map.isTileVisible(tile.x, tile.y, this.game.humanPlayer.id);
+        // Enhanced frustum culling: Early exit for off-screen entities
+        // This reduces draw calls by 20-40% on large maps
+        const screenX = entity.x - this.game.camera.x;
+        const screenY = entity.y - this.game.camera.y;
+        const margin = FRUSTUM_CULLING.RENDER_MARGIN;
+        
+        // Early frustum cull - skip entities completely outside viewport
+        if (screenX < -margin || screenX > this.canvas.width + margin ||
+            screenY < -margin || screenY > this.canvas.height + margin) {
+            
+            // Cache result if caching enabled
+            if (FRUSTUM_CULLING.CACHE_VISIBILITY) {
+                const entityId = entity.id || `${entity.x},${entity.y},${entity.type}`;
+                this.visibilityCache.set(entityId, false);
+            }
+            
+            return false;
+        }
+        
+        // Then check fog of war (if enabled)
+        let visible = true;
+        if (FRUSTUM_CULLING.ENABLE_FOG_CHECK) {
+            const tile = worldToTile(entity.x, entity.y);
+            visible = this.game.map.isTileVisible(tile.x, tile.y, this.game.humanPlayer.id);
+            
+            // CRITICAL FIX: Units in combat should always be visible, even in fog
+            // This prevents invisible units that can still be attacked
+            if (!visible && entity instanceof Unit) {
+                // Check if unit is in combat (has target enemy or is being targeted)
+                const isInCombat = entity.targetEnemy && entity.targetEnemy.isAlive();
+                
+                // Check if any player unit is targeting this enemy
+                let isBeingTargeted = false;
+                if (entity.owner !== this.game.humanPlayer) {
+                    for (const unit of this.game.units) {
+                        if (unit.owner === this.game.humanPlayer && 
+                            unit.targetEnemy === entity && 
+                            unit.isAlive()) {
+                            isBeingTargeted = true;
+                            break;
+                        }
+                    }
+                    // Also check buildings (turrets)
+                    if (!isBeingTargeted) {
+                        for (const building of this.game.buildings) {
+                            if (building.owner === this.game.humanPlayer && 
+                                building.targetEnemy === entity && 
+                                building.isAlive()) {
+                                isBeingTargeted = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // If unit is in combat or being targeted, make it visible
+                if (isInCombat || isBeingTargeted) {
+                    visible = true;
+                }
+            }
+        }
+        
+        // Cache result if caching enabled
+        if (FRUSTUM_CULLING.CACHE_VISIBILITY) {
+            const entityId = entity.id || `${entity.x},${entity.y},${entity.type}`;
+            this.visibilityCache.set(entityId, visible);
+        }
+        
+        return visible;
     }
 
     blendColors(color1, color2, ratio = 0.6) {

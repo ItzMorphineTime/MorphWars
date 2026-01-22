@@ -46,7 +46,7 @@ function tileToWorld(tileX, tileY) {
     };
 }
 
-function canPlaceBuilding(map, x, y, width, height, player, game) {
+function canPlaceBuilding(map, x, y, width, height, player, game, allowWater = false) {
     if (x < 0 || y < 0 || x + width > map.width || y + height > map.height) {
         return false;
     }
@@ -54,8 +54,19 @@ function canPlaceBuilding(map, x, y, width, height, player, game) {
     for (let ty = y; ty < y + height; ty++) {
         for (let tx = x; tx < x + width; tx++) {
             const tile = map.getTile(tx, ty);
-            if (tile.blocked || tile.building) {
-                return false;
+            if (!tile) return false;
+            
+            // PORT buildings can be placed on water or land, and don't check blocked/terrain
+            if (allowWater) {
+                // Only check for existing buildings
+                if (tile.building) {
+                    return false;
+                }
+            } else {
+                // Other buildings cannot be placed on blocked terrain or water, or where buildings exist
+                if (tile.blocked || tile.building || tile.terrain === 'water') {
+                    return false;
+                }
             }
         }
     }
@@ -111,14 +122,30 @@ function canPlaceBuilding(map, x, y, width, height, player, game) {
     return true;
 }
 
-function findPath(map, startX, startY, endX, endY, size = 1) {
+function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
     // Validate inputs
     if (!validateMapCoordinates(map, startX, startY) || !validateMapCoordinates(map, endX, endY)) {
         return null;
     }
+    
+    // For naval units, validate that start and destination are valid for naval movement
+    // (water or within 1 tile of land)
+    if (isNaval) {
+        if (!map.isNavalValid(startX, startY)) {
+            return null; // Cannot pathfind from invalid start
+        }
+        if (!map.isNavalValid(endX, endY)) {
+            return null; // Cannot pathfind to invalid destination
+        }
+    }
+    
+    // For non-naval units, validate that destination is not water
+    if (!isNaval && map.isWater(endX, endY)) {
+        return null; // Cannot pathfind to water destination
+    }
 
-    // Check cache first
-    const cached = getCachedPath(startX, startY, endX, endY);
+    // Check cache first (harvester status not included in cache key for now)
+    const cached = getCachedPath(startX, startY, endX, endY, size);
     if (cached !== null) {
         return cached;
     }
@@ -132,9 +159,9 @@ function findPath(map, startX, startY, endX, endY, size = 1) {
     // Use hierarchical pathfinding for long distances
     const distanceTiles = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
     if (distanceTiles > PATHFINDING.HIERARCHICAL_THRESHOLD) {
-        result = findPathHierarchical(map, startX, startY, endX, endY, size);
+        result = findPathHierarchical(map, startX, startY, endX, endY, size, isHarvester, isNaval);
     } else {
-        result = findPathDirect(map, startX, startY, endX, endY, size);
+        result = findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
     }
 
     if (typeof profiler !== 'undefined' && profiler && profiler.enabled) {
@@ -145,7 +172,7 @@ function findPath(map, startX, startY, endX, endY, size = 1) {
 }
 
 // Hierarchical pathfinding for long distances
-function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
+function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
     const distanceTiles = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
     const waypointDistance = PATHFINDING.WAYPOINT_DISTANCE;
     
@@ -154,7 +181,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
     
     if (numWaypoints <= 1) {
         // Short path, use regular pathfinding
-        return findPathDirect(map, startX, startY, endX, endY, size);
+        return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
     }
 
     // Generate waypoints along the direct line
@@ -164,9 +191,13 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
         const wx = Math.floor(startX + (endX - startX) * t);
         const wy = Math.floor(startY + (endY - startY) * t);
         
-        // Find nearest valid tile for waypoint
-        const validWaypoint = findNearestValidTile(map, wx, wy, size);
+        // Find nearest valid tile for waypoint (consider naval units need water)
+        const validWaypoint = findNearestValidTile(map, wx, wy, size, isNaval ? 10 : 5, isNaval);
         if (validWaypoint) {
+            // For naval units, ensure waypoint is on water
+            if (isNaval && !map.isWater(validWaypoint.x, validWaypoint.y)) {
+                continue; // Skip this waypoint if not water
+            }
             waypoints.push(validWaypoint);
         }
     }
@@ -177,7 +208,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
     let currentY = startY;
 
     for (const waypoint of waypoints) {
-        const segmentPath = findPathDirect(map, currentX, currentY, waypoint.x, waypoint.y, size);
+        const segmentPath = findPathDirect(map, currentX, currentY, waypoint.x, waypoint.y, size, isHarvester, isNaval);
         if (segmentPath && segmentPath.length > 0) {
             // Add segment path (skip first point to avoid duplicates)
             for (let i = 1; i < segmentPath.length; i++) {
@@ -187,7 +218,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
             currentY = waypoint.y;
         } else {
             // If waypoint fails, try direct path
-            const directPath = findPathDirect(map, currentX, currentY, endX, endY, size);
+            const directPath = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval);
             if (directPath) {
                 return directPath;
             }
@@ -196,7 +227,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
     }
 
     // Final segment to destination
-    const finalSegment = findPathDirect(map, currentX, currentY, endX, endY, size);
+    const finalSegment = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval);
     if (finalSegment && finalSegment.length > 0) {
         for (let i = 1; i < finalSegment.length; i++) {
             fullPath.push(finalSegment[i]);
@@ -206,15 +237,15 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1) {
     if (fullPath.length > 0) {
         // Add start point
         fullPath.unshift({ x: startX, y: startY });
-        cachePath(startX, startY, endX, endY, fullPath);
+        cachePath(startX, startY, endX, endY, fullPath, size);
         return fullPath;
     }
 
     // Fallback to direct pathfinding
-    return findPathDirect(map, startX, startY, endX, endY, size);
+    return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
 }
 
-function findPathDirect(map, startX, startY, endX, endY, size = 1) {
+function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
     // This is the original findPath logic without hierarchical check
     const openSet = new Map();
     const closedSet = new Set();
@@ -282,14 +313,100 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1) {
             if (closedSet.has(neighborKey)) continue;
             if (neighbor.x < 0 || neighbor.y < 0 || neighbor.x >= map.width || neighbor.y >= map.height) continue;
 
-            const tile = map.getTile(neighbor.x, neighbor.y);
-            if (!tile) continue;
+            // Check water requirement for naval units (water or within 1 tile of land)
+            if (isNaval) {
+                if (!map.isNavalValid(neighbor.x, neighbor.y)) {
+                    continue; // Naval units can only move on water or near coastlines
+                }
+            }
 
-            const isDestination = neighbor.x === endX && neighbor.y === endY;
-            const buildingAllowsUnits = tile.building && tile.building.stats.allowsUnitsOnTop;
+            // Use spatial grid for faster collision detection if available
+            if (map.spatialGrid) {
+                const isDestination = neighbor.x === endX && neighbor.y === endY;
+                // For destination, only check if it's valid for naval/non-naval movement
+                if (isDestination) {
+                    if (isNaval && !map.isNavalValid(neighbor.x, neighbor.y)) {
+                        continue; // Naval units must end on water or near coastlines
+                    }
+                    if (!isNaval && map.isWater(neighbor.x, neighbor.y)) {
+                        continue; // Non-naval units cannot end on water
+                    }
+                    // Destination is valid terrain-wise, allow it (even if blocked by units/buildings)
+                } else {
+                    // For naval units, water tiles are valid even if marked as blocked
+                    if (isNaval && map.isWater(neighbor.x, neighbor.y)) {
+                        // Water tile - check building collision only
+                        const tile = map.getTile(neighbor.x, neighbor.y);
+                        if (tile && tile.building && !tile.building.stats.allowsUnitsOnTop) {
+                            continue; // Blocked by building
+                        }
+                        // Water tile is valid for naval units, continue to next check
+                    } else if (map.spatialGrid.isTileBlocked(neighbor.x, neighbor.y, size, isHarvester, isNaval)) {
+                        continue;
+                    }
+                }
+            } else {
+                // Fallback to original method
+                const tile = map.getTile(neighbor.x, neighbor.y);
+                if (!tile) continue;
 
-            if (!isDestination && (tile.blocked || (tile.unit && tile.unit.size >= size)) && !buildingAllowsUnits) {
-                continue;
+                const isDestination = neighbor.x === endX && neighbor.y === endY;
+                const buildingAllowsUnits = tile.building && tile.building.stats.allowsUnitsOnTop;
+
+                // For size > 1 units, check if the unit can fit (check the area the unit occupies)
+                if (size > 1 && !isDestination) {
+                    let canFit = true;
+                    for (let dy = 0; dy < size && canFit; dy++) {
+                        for (let dx = 0; dx < size && canFit; dx++) {
+                            const checkX = neighbor.x + dx;
+                            const checkY = neighbor.y + dy;
+                            if (checkX >= map.width || checkY >= map.height) {
+                                canFit = false;
+                                break;
+                            }
+                            const checkTile = map.getTile(checkX, checkY);
+                            if (!checkTile) {
+                                canFit = false;
+                                break;
+                            }
+                            // Check terrain requirements for naval units
+                            if (isNaval && checkTile.terrain !== 'water') {
+                                canFit = false;
+                                break;
+                            }
+                            if (!isNaval && checkTile.terrain === 'water') {
+                                canFit = false;
+                                break;
+                            }
+                            
+                            // Allow harvesters to pass through other harvesters (handled in unit movement)
+                            // Allow naval units to pass through other naval units
+                            const hasBlockingUnit = checkTile.unit && checkTile.unit.size >= size && 
+                                !(checkTile.unit.isHarvester && isHarvester) && 
+                                !(checkTile.unit.isNaval && isNaval);
+                            if (checkTile.blocked || (checkTile.building && !checkTile.building.stats.allowsUnitsOnTop) || hasBlockingUnit) {
+                                canFit = false;
+                            }
+                        }
+                    }
+                    if (!canFit) {
+                        continue;
+                    }
+                } else {
+                    // Size 1 or destination - use original logic
+                    if (isDestination) {
+                        // Destination is allowed even if blocked (units can push through)
+                        // But check terrain requirements
+                        if (isNaval && !map.isNavalValid(neighbor.x, neighbor.y)) {
+                            continue; // Naval units must end on water or near coastlines
+                        }
+                        if (!isNaval && map.isWater(neighbor.x, neighbor.y)) {
+                            continue; // Non-naval units cannot end on water
+                        }
+                    } else if ((tile.blocked || (tile.unit && tile.unit.size >= size && !tile.unit.isHarvester)) && !buildingAllowsUnits) {
+                        continue;
+                    }
+                }
             }
 
             const isDiagonal = neighbor.x !== current.x && neighbor.y !== current.y;
@@ -318,7 +435,7 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1) {
     return null;
 }
 
-function findNearestValidTile(map, x, y, size = 1, searchRadius = 5) {
+function findNearestValidTile(map, x, y, size = 1, searchRadius = 5, requireWater = false) {
     for (let r = 0; r <= searchRadius; r++) {
         for (let dx = -r; dx <= r; dx++) {
             for (let dy = -r; dy <= r; dy++) {
@@ -356,7 +473,22 @@ function formatTime(ms) {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
+// Notification deduplication - prevent spam
+let lastNotification = null;
+let lastNotificationTime = 0;
+const NOTIFICATION_COOLDOWN = 500; // 500ms cooldown between identical notifications
+
 function showNotification(message, duration = 3000) {
+    const now = Date.now();
+    
+    // Check if this is a duplicate notification within cooldown period
+    if (message === lastNotification && (now - lastNotificationTime) < NOTIFICATION_COOLDOWN) {
+        return; // Skip duplicate notification
+    }
+    
+    lastNotification = message;
+    lastNotificationTime = now;
+    
     const container = document.getElementById('notifications');
     const notification = document.createElement('div');
     notification.className = 'notification';
@@ -365,6 +497,10 @@ function showNotification(message, duration = 3000) {
 
     setTimeout(() => {
         notification.remove();
+        // Clear last notification if this one is being removed
+        if (lastNotification === message) {
+            lastNotification = null;
+        }
     }, duration);
 }
 
@@ -432,8 +568,9 @@ const pathfindingCache = new Map();
 const CACHE_SIZE_LIMIT = 1000;
 const CACHE_TTL = 5000; // 5 seconds
 
-function getCachedPath(startX, startY, endX, endY) {
-    const key = `${startX},${startY},${endX},${endY}`;
+function getCachedPath(startX, startY, endX, endY, size = 1) {
+    // Include size in cache key to prevent incorrect cache hits
+    const key = `${startX},${startY},${endX},${endY},${size}`;
     const cached = pathfindingCache.get(key);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         return cached.path;
@@ -441,9 +578,9 @@ function getCachedPath(startX, startY, endX, endY) {
     return null;
 }
 
-function cachePath(startX, startY, endX, endY, path) {
+function cachePath(startX, startY, endX, endY, path, size = 1) {
     if (pathfindingCache.size >= CACHE_SIZE_LIMIT) {
-        // Remove oldest entries
+        // Remove oldest entries (LRU eviction)
         const entries = Array.from(pathfindingCache.entries());
         entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
         const toRemove = Math.floor(CACHE_SIZE_LIMIT * 0.2); // Remove 20%
@@ -452,7 +589,8 @@ function cachePath(startX, startY, endX, endY, path) {
         }
     }
     
-    const key = `${startX},${startY},${endX},${endY}`;
+    // Include size in cache key
+    const key = `${startX},${startY},${endX},${endY},${size}`;
     pathfindingCache.set(key, {
         path: path,
         timestamp: Date.now()

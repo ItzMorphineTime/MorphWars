@@ -126,7 +126,7 @@ class SaveLoadManager {
             })),
 
             // Units
-            units: game.units.map(unit => {
+            units: game.units.map((unit, unitIndex) => {
                 const baseData = {
                     type: unit.type,
                     x: unit.x,
@@ -140,6 +140,22 @@ class SaveLoadManager {
                     formationId: unit.formationId || null,
                     formationIndex: unit.formationIndex || null,
                 };
+                
+                // Add transport-specific properties
+                if (unit.isTransport) {
+                    // Save embarked units as array of unit indices
+                    baseData.embarkedUnitIndices = unit.embarkedUnits.map(embarkedUnit => {
+                        const index = game.units.indexOf(embarkedUnit);
+                        return index >= 0 ? index : null;
+                    }).filter(index => index !== null);
+                    baseData.transportUsed = unit.transportUsed || 0;
+                }
+                
+                // Save transportedBy reference as unit index
+                if (unit.transportedBy) {
+                    const transportIndex = game.units.indexOf(unit.transportedBy);
+                    baseData.transportedByIndex = transportIndex >= 0 ? transportIndex : null;
+                }
                 
                 // Add airplane-specific properties
                 if (unit.isAirplane) {
@@ -304,8 +320,10 @@ class SaveLoadManager {
             game.map.setBuilding(buildingData.tileX, buildingData.tileY, stats.width, stats.height, building);
         }
 
-        // Restore units
-        for (const unitData of state.units) {
+        // Restore units (first pass - create all units)
+        const unitIndexMap = new Map(); // Map from save index to unit object
+        for (let i = 0; i < state.units.length; i++) {
+            const unitData = state.units[i];
             const owner = game.players.find(p => p.id === unitData.ownerId);
             if (!owner) continue;
 
@@ -336,9 +354,49 @@ class SaveLoadManager {
                 }
             }
 
+            // Store unit index mapping for transport relationships
+            unitIndexMap.set(i, unit);
+
             game.units.push(unit);
-            const tile = worldToTile(unitData.x, unitData.y);
-            game.map.setUnit(tile.x, tile.y, unit);
+            // Only place unit on map if it's not being transported
+            if (!unitData.transportedByIndex) {
+                const tile = worldToTile(unitData.x, unitData.y);
+                game.map.setUnit(tile.x, tile.y, unit);
+            }
+        }
+
+        // Second pass - restore transport relationships
+        for (let i = 0; i < state.units.length; i++) {
+            const unitData = state.units[i];
+            const unit = unitIndexMap.get(i);
+            if (!unit) continue;
+
+            // Restore transportedBy relationship
+            if (unitData.transportedByIndex !== undefined && unitData.transportedByIndex !== null) {
+                const transport = unitIndexMap.get(unitData.transportedByIndex);
+                if (transport && transport.isTransport) {
+                    unit.transportedBy = transport;
+                    // Remove unit from map if it's being transported
+                    const tile = worldToTile(unit.x, unit.y);
+                    game.map.clearUnit(tile.x, tile.y);
+                }
+            }
+
+            // Restore embarked units for transport units
+            if (unit.isTransport && unitData.embarkedUnitIndices) {
+                unit.embarkedUnits = [];
+                unit.transportUsed = unitData.transportUsed || 0;
+                for (const embarkedIndex of unitData.embarkedUnitIndices) {
+                    const embarkedUnit = unitIndexMap.get(embarkedIndex);
+                    if (embarkedUnit) {
+                        unit.embarkedUnits.push(embarkedUnit);
+                        embarkedUnit.transportedBy = unit;
+                        // Ensure embarked unit is not on the map
+                        const tile = worldToTile(embarkedUnit.x, embarkedUnit.y);
+                        game.map.clearUnit(tile.x, tile.y);
+                    }
+                }
+            }
         }
 
         // Restore formations

@@ -23,9 +23,31 @@ class UIController {
         this.powerFillEl = document.getElementById('powerFill');
         this.selectionInfoEl = document.getElementById('selectionInfo');
         
-        // Set up event delegation for pause button (prevents losing listeners on redraw)
+        // Set up event delegation for pause button and disembark button (prevents losing listeners on redraw)
         if (this.selectionInfoEl) {
             this.selectionInfoEl.addEventListener('click', (e) => {
+                // Handle disembark button
+                const disembarkBtn = e.target.closest('#disembarkBtn');
+                if (disembarkBtn) {
+                    e.stopPropagation();
+                    const selected = this.game.selectedEntities[0];
+                    if (selected && selected instanceof Unit && selected.isTransport && selected.embarkedUnits.length > 0) {
+                        let disembarkedCount = 0;
+                        const unitsToDisembark = [...selected.embarkedUnits];
+                        for (const unit of unitsToDisembark) {
+                            if (selected.disembarkUnit(unit, this.game)) {
+                                disembarkedCount++;
+                            }
+                        }
+                        if (disembarkedCount > 0) {
+                            showNotification(`${disembarkedCount} unit(s) disembarked`);
+                            this.updateSelection(); // Refresh UI
+                        }
+                    }
+                    return;
+                }
+                
+                // Handle pause button
                 const pauseBtn = e.target.closest('#pauseProductionBtn');
                 if (!pauseBtn) return;
                 
@@ -98,7 +120,11 @@ class UIController {
                     this.game.deployMCV(selected);
                 }
             } else if (button.dataset.building) {
-                // Place building
+                // Place building - check if game is ready
+                if (!this.game.humanPlayer) {
+                    // Game not fully initialized yet
+                    return;
+                }
                 this.game.startBuildingPlacement(button.dataset.building);
             } else if (button.dataset.unit) {
                 // Train unit - add to queue (credits charged when unit finishes)
@@ -194,15 +220,29 @@ class UIController {
         this.powerUsedEl.textContent = player.powerConsumed;
         this.powerTotalEl.textContent = player.powerGenerated;
 
-        const ratio = player.getPowerRatio();
-        this.powerFillEl.style.width = `${Math.min(ratio * 100, 100)}%`;
+        // Calculate power percentage: consumed / generated * 100
+        // Maximum power is powerGenerated, so we show what percentage is being used
+        const maxPower = player.powerGenerated;
+        let powerPercentage = 0;
+        
+        if (maxPower > 0) {
+            powerPercentage = (player.powerConsumed / maxPower) * 100;
+        } else if (player.powerConsumed > 0) {
+            // If we have consumption but no generation, show 100% (overloaded)
+            powerPercentage = 100;
+        }
+        
+        // Cap visual width at 100% but show percentage
+        this.powerFillEl.style.width = `${Math.min(powerPercentage, 100)}%`;
 
-        if (ratio < 1) {
+        // Red if over 100% (consumption exceeds generation), green-to-yellow otherwise
+        if (powerPercentage > 100) {
             this.powerFillEl.classList.add('power-low');
-            this.powerFillEl.style.backgroundColor = '#ff0000'; // Red when low
+            // Red gradient is applied via CSS .power-low class
         } else {
             this.powerFillEl.classList.remove('power-low');
-            this.powerFillEl.style.backgroundColor = '#ffff00'; // Yellow when normal
+            // Remove any inline background to use CSS default (green to yellow gradient)
+            this.powerFillEl.style.background = '';
         }
     }
 
@@ -263,6 +303,16 @@ class UIController {
                 if (entity.isHarvester) {
                     html += `Cargo: ${Math.floor(entity.cargo)}/${entity.stats.maxCargo}<br>`;
                 }
+                if (entity.isTransport) {
+                    const embarkedCount = entity.getEmbarkedCount();
+                    const capacity = entity.getTransportCapacity();
+                    html += `<span style="color: #0f0;">Transport: ${embarkedCount}/${capacity}</span><br>`;
+                    if (embarkedCount > 0) {
+                        html += `<button class="build-button" id="disembarkBtn" style="grid-column: 1 / -1; margin-top: 5px; border-color: #0f0;">`;
+                        html += `🚢 DISEMBARK ALL (${embarkedCount})`;
+                        html += `</button>`;
+                    }
+                }
                 if (entity.maxAmmo > 0) {
                     html += `<span class="selection-ammo">Ammo: ${entity.ammo}/${entity.maxAmmo}</span><br>`;
                     if (entity.needsReload) {
@@ -295,14 +345,19 @@ class UIController {
             
             this.selectionInfoEl.innerHTML = html;
             
-            // Use event delegation for pause button (prevents losing listener on redraw)
+            // Use event delegation for pause button and disembark button (prevents losing listener on redraw)
             if (entity instanceof Building && entity.stats.produces) {
                 // Store building reference in data attribute for event delegation
                 this.selectionInfoEl.setAttribute('data-building-id', entity.id || `${entity.x}-${entity.y}`);
             }
+            if (entity instanceof Unit && entity.isTransport) {
+                // Store transport reference for disembark button
+                this.selectionInfoEl.setAttribute('data-transport-id', entity.id || `${entity.x}-${entity.y}`);
+            }
         } else {
             html += `<div class="unit-info">`;
             html += `<strong>${selected.length} units selected</strong><br>`;
+            html += `<span style="opacity: 0.8; font-size: 12px;">Click a unit twice to select all of that type</span><br><br>`;
 
             const types = {};
             for (const entity of selected) {
@@ -952,14 +1007,46 @@ class UIController {
         html += '<div><strong>WASD / Arrow Keys:</strong> Move camera</div>';
         html += '<div><strong>Space:</strong> Center camera on selected units</div>';
         html += '<div><strong>Delete:</strong> Delete selected buildings</div>';
-        html += '<div><strong>1:</strong> Create Line Formation</div>';
-        html += '<div><strong>2:</strong> Create Box Formation</div>';
-        html += '<div><strong>3:</strong> Create Wedge Formation</div>';
-        html += '<div><strong>4:</strong> Create Column Formation</div>';
+        html += '<div><strong>Ctrl+A:</strong> Select all units</div>';
+        html += '<div><strong>Double-Click Unit:</strong> Select all units of same type</div>';
+        html += '<div><strong>S:</strong> Stop selected units</div>';
+        html += '<div><strong>A + Right Click:</strong> Attack move</div>';
         html += '<div><strong>F3:</strong> Toggle Performance Profiler</div>';
         html += '<div><strong>ESC:</strong> Cancel building placement / Deselect</div>';
         html += '</div>';
         
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">CONTROL GROUPS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Ctrl+Shift+1-9:</strong> Assign selected units to control group</div>';
+        html += '<div><strong>Alt+1-9:</strong> Select control group</div>';
+        html += '<div style="margin-top: 5px; opacity: 0.8;">Select units first, then press Ctrl+Shift+number to assign them to a control group. Press Alt+number to quickly select that group later.</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">CAMERA PRESETS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Ctrl+F1-F4:</strong> Jump to saved camera position</div>';
+        html += '<div><strong>Shift+Ctrl+F1-F4:</strong> Save current camera position</div>';
+        html += '<div>Useful for quickly jumping between key locations</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">UNIT FORMATIONS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>1:</strong> Create Line Formation</div>';
+        html += '<div><strong>2:</strong> Create Box Formation</div>';
+        html += '<div><strong>3:</strong> Create Wedge Formation</div>';
+        html += '<div><strong>4:</strong> Create Column Formation</div>';
+        html += '<div>Select multiple units first, then press formation key</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">BUILDING HOTKEYS</strong></div>';
+        html += '<div style="margin-bottom: 8px;"><strong>P</strong> - Power Plant</div>';
+        html += '<div style="margin-bottom: 8px;"><strong>R</strong> - Refinery</div>';
+        html += '<div style="margin-bottom: 8px;"><strong>B</strong> - Barracks</div>';
+        html += '<div style="margin-bottom: 8px;"><strong>W</strong> - War Factory</div>';
+        html += '<div style="margin-bottom: 8px;"><strong>A</strong> - Airfield</div>';
+        html += '<div style="margin-bottom: 8px;"><strong>G</strong> - Gun Turret</div>';
+        html += '<div style="margin-bottom: 15px;"><strong>T</strong> - AA Turret</div>';
+        html += '<div style="margin-bottom: 15px; color: #aaa; font-size: 12px;">Press hotkey to start building placement. Press again to cancel.</div>';
         html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">BUILDING CONTROLS</strong></div>';
         html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
         html += '<div><strong>Select Building:</strong> View production queue</div>';
@@ -976,11 +1063,12 @@ class UIController {
         html += '<div><strong>Ion Cannon:</strong> Requires Superweapon building</div>';
         html += '</div>';
         
-        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">UNIT FORMATIONS</strong></div>';
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">CAMERA CONTROLS</strong></div>';
         html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
-        html += '<div>Select multiple units and press <strong>1-4</strong> to create formations</div>';
-        html += '<div>Units in formation move together and maintain formation</div>';
-        html += '<div>Right-click move on individual unit removes it from formation</div>';
+        html += '<div><strong>Middle Mouse Drag:</strong> Pan camera</div>';
+        html += '<div><strong>Mouse Edge Scrolling:</strong> Move camera when mouse near screen edge</div>';
+        html += '<div><strong>Click Minimap:</strong> Jump camera to clicked location</div>';
+        html += '<div><strong>Camera Following:</strong> Camera smoothly follows selected units</div>';
         html += '</div>';
         
         html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">GAME MECHANICS</strong></div>';

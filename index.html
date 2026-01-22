@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta author="Joe Loe">
-    <title>Command & Conquer - RTS</title>
+    <title>MORPH WARS! - RTS - Joe Loe</title>
     <style>
         * {
             margin: 0;
@@ -87,12 +87,12 @@
 
         .power-fill {
             height: 100%;
-            background: linear-gradient(90deg, #0f0, #0a0);
-            transition: width 0.3s;
+            background: linear-gradient(90deg, #0f0, #ffff00);
+            transition: width 0.3s, background 0.3s;
         }
 
         .power-low {
-            background: linear-gradient(90deg, #f00, #a00);
+            background: linear-gradient(90deg, #f00, #a00) !important;
         }
 
         #minimapContainer {
@@ -379,7 +379,7 @@
 </head>
 <body>
     <div id="gameMenu">
-        <div class="menu-title">COMMAND & CONQUER</div>
+        <div class="menu-title">MORPH WARS!</div>
         <div class="menu-option">
             <label>AI Opponents:</label>
             <select id="aiCount">
@@ -515,8 +515,11 @@
     <!-- Core Game Scripts -->
     <script src="js/constants.js"></script>
     <script src="js/performance.js"></script>
+    <script src="js/pool.js"></script>
+    <script src="js/effects.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/perlin.js"></script>
+    <script src="js/spatialgrid.js"></script>
     <script src="js/map.js"></script>
     <script src="js/entity.js"></script>
     <script src="js/unit.js"></script>

@@ -17,6 +17,19 @@ class InputHandler {
         this.isRightDragging = false;
         this.keys = {};
 
+        // Double-click detection for unit selection
+        this.lastClickTime = 0;
+        this.lastClickEntity = null;
+        this.DOUBLE_CLICK_TIME = 300; // ms
+
+        // Event debouncing/throttling
+        this.lastMouseMoveTime = 0;
+        this.MOUSE_MOVE_THROTTLE = 16; // ~60fps (throttle mouse move to once per frame)
+        this.lastWheelTime = 0;
+        this.WHEEL_THROTTLE = 50; // Throttle wheel events to 20fps
+        this.pendingMouseMove = null;
+        this.animationFrameId = null;
+
         this.setupEventListeners();
     }
 
@@ -27,7 +40,9 @@ class InputHandler {
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
 
-        document.addEventListener('keydown', (e) => this.onKeyDown(e));
+        // Use capture phase for keydown to catch events before browser shortcuts
+        // This is especially important for Ctrl+Shift+2 and Ctrl+Shift+3 which browsers may intercept
+        document.addEventListener('keydown', (e) => this.onKeyDown(e), true);
         document.addEventListener('keyup', (e) => this.onKeyUp(e));
 
         // Minimap click to navigate
@@ -93,12 +108,61 @@ class InputHandler {
     }
 
     onMouseMove(e) {
+        // Throttle mouse move events using requestAnimationFrame
+        const now = performance.now();
+        if (now - this.lastMouseMoveTime < this.MOUSE_MOVE_THROTTLE) {
+            // Store the latest event for processing
+            this.pendingMouseMove = e;
+            
+            // Schedule processing on next frame if not already scheduled
+            if (!this.animationFrameId) {
+                this.animationFrameId = requestAnimationFrame(() => {
+                    if (this.pendingMouseMove) {
+                        this.processMouseMove(this.pendingMouseMove);
+                        this.pendingMouseMove = null;
+                    }
+                    this.animationFrameId = null;
+                });
+            }
+            return;
+        }
+        
+        this.processMouseMove(e);
+        this.lastMouseMoveTime = now;
+    }
+    
+    processMouseMove(e) {
         this.updateMousePosition(e);
+
+        // Edge scrolling: Move camera when mouse is near screen edges
+        const edgeScrollMargin = CAMERA_CONFIG.EDGE_SCROLL_MARGIN;
+        const scrollSpeed = CAMERA_CONFIG.EDGE_SCROLL_SPEED;
+        
+        if (!this.isOverSidebar(e)) {
+            if (e.clientX < edgeScrollMargin) {
+                this.game.camera.x -= scrollSpeed;
+                this.game.cameraTarget = null; // Cancel camera following
+            } else if (e.clientX > window.innerWidth - edgeScrollMargin) {
+                this.game.camera.x += scrollSpeed;
+                this.game.cameraTarget = null;
+            }
+            
+            if (e.clientY < edgeScrollMargin) {
+                this.game.camera.y -= scrollSpeed;
+                this.game.cameraTarget = null;
+            } else if (e.clientY > window.innerHeight - edgeScrollMargin) {
+                this.game.camera.y += scrollSpeed;
+                this.game.cameraTarget = null;
+            }
+            
+            this.clampCamera();
+        }
 
         // Pan camera with middle mouse (works anywhere, even over sidebar)
         if (e.buttons === 4) {
-            this.game.camera.x -= e.movementX;
-            this.game.camera.y -= e.movementY;
+            this.game.camera.x -= e.movementX * CAMERA_CONFIG.MIDDLE_MOUSE_PAN_SPEED;
+            this.game.camera.y -= e.movementY * CAMERA_CONFIG.MIDDLE_MOUSE_PAN_SPEED;
+            this.game.cameraTarget = null; // Cancel camera following when manually panning
             // Clamp camera to map bounds
             this.clampCamera();
             return;
@@ -121,11 +185,51 @@ class InputHandler {
             return;
         }
 
+        // Check for embark/disembark opportunities
+        const target = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
+        const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit);
+        const hasNonTransportSelected = selectedUnits.some(u => !u.isTransport && !u.transportedBy);
+        const hasTransportSelected = selectedUnits.some(u => u.isTransport);
+        
+        // Check for embark: Selected units over a transport
+        if (hasNonTransportSelected && target instanceof Unit && target.isTransport && 
+            target.owner === this.game.humanPlayer && !selectedUnits.includes(target)) {
+            // Check if any selected unit can embark
+            const canEmbark = selectedUnits.some(unit => {
+                if (unit.transportedBy || unit.isTransport) return false;
+                if (target.transportType === 'infantry' && unit.stats.category !== 'infantry') return false;
+                if (target.transportType === 'all' && target.isNaval) {
+                    const unitSize = Math.ceil(unit.stats.size || 1);
+                    return (target.transportUsed + unitSize <= target.transportCapacity);
+                } else if (target.transportType === 'infantry') {
+                    return (target.embarkedUnits.length < target.transportCapacity);
+                }
+                return false;
+            });
+            
+            if (canEmbark) {
+                this.canvas.style.cursor = 'grab';
+                return;
+            }
+        }
+        
+        // Check for disembark: Selected transport hovering over itself
+        if (hasTransportSelected && selectedUnits.length === 1) {
+            const transport = selectedUnits[0];
+            if (transport.isTransport && transport.embarkedUnits.length > 0) {
+                // Check if hovering directly over the transport
+                const dist = distance(this.mouseWorldX, this.mouseWorldY, transport.x, transport.y);
+                if (dist < 30) { // Within unit size
+                    this.canvas.style.cursor = 'grab';
+                    return;
+                }
+            }
+        }
+
         // Units selected - check what's under mouse
         if (this.game.selectedEntities.length > 0) {
-            const target = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
             const hasCombatUnits = this.game.selectedEntities.some(e => 
-                e instanceof Unit && !e.isHarvester && e.stats.damage
+                e instanceof Unit && !e.isHarvester && e.stats.damage && !e.transportedBy
             );
 
             if (target && target.owner !== this.game.humanPlayer && target.isAlive && target.isAlive() && hasCombatUnits) {
@@ -157,11 +261,46 @@ class InputHandler {
 
     onWheel(e) {
         e.preventDefault();
-        // Could implement zoom here if desired
+
+        // Throttle wheel events
+        const now = performance.now();
+        if (now - this.lastWheelTime < this.WHEEL_THROTTLE) {
+            return; // Skip this event
+        }
+        this.lastWheelTime = now;
+
+        // Zoom functionality (if camera.scale exists)
+        if (this.game.camera.scale !== undefined) {
+            const zoomSpeed = CAMERA_CONFIG.ZOOM_SPEED;
+            const mouseWorldX = this.mouseWorldX;
+            const mouseWorldY = this.mouseWorldY;
+
+            if (e.deltaY > 0) {
+                // Zoom out
+                this.game.camera.scale = Math.max(CAMERA_CONFIG.MIN_ZOOM, this.game.camera.scale - zoomSpeed);
+            } else {
+                // Zoom in
+                this.game.camera.scale = Math.min(CAMERA_CONFIG.MAX_ZOOM, this.game.camera.scale + zoomSpeed);
+            }
+
+            // Adjust camera to zoom towards mouse position
+            const zoomFactor = this.game.camera.scale;
+            this.game.camera.x = mouseWorldX - (this.mouseX / zoomFactor);
+            this.game.camera.y = mouseWorldY - (this.mouseY / zoomFactor);
+
+            this.game.cameraTarget = null; // Cancel camera following when zooming
+            this.clampCamera();
+        }
     }
 
     onKeyDown(e) {
         this.keys[e.key] = true;
+
+        // Control groups should work even when paused (for testing/debugging)
+        // But check if game is initialized
+        if (!this.game) {
+            return;
+        }
 
         // Hotkeys
         if (e.key === 'Escape') {
@@ -190,24 +329,247 @@ class InputHandler {
             }
         }
 
-        if (e.key === 'a' || e.key === 'A') {
-            // Attack move toggle
+        // Camera presets (Ctrl+F1-F4 to jump, Shift+Ctrl+F1-F4 to save)
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'F1' || e.key === 'F2' || e.key === 'F3' || e.key === 'F4')) {
+            e.preventDefault(); // Prevent browser shortcuts
+            e.stopPropagation();
+            const presetNum = e.key === 'F1' ? 1 : e.key === 'F2' ? 2 : e.key === 'F3' ? 3 : 4;
+            if (e.shiftKey) {
+                // Shift+Ctrl+F1-F4: Save camera position
+                this.game.cameraPresets.set(presetNum, { x: this.game.camera.x, y: this.game.camera.y });
+                showNotification(`Camera position ${presetNum} saved (Ctrl+F${presetNum} to jump)`);
+            } else {
+                // Ctrl+F1-F4: Jump to saved camera position
+                const preset = this.game.cameraPresets.get(presetNum);
+                if (preset) {
+                    this.game.camera.x = preset.x;
+                    this.game.camera.y = preset.y;
+                    this.clampCamera();
+                    showNotification(`Jumped to camera position ${presetNum}`);
+                } else {
+                    showNotification(`No camera position saved for ${presetNum} (Shift+Ctrl+F${presetNum} to save)`);
+                }
+            }
+            return; // Prevent other handlers
+        }
+
+        // Select All Units (Ctrl+A)
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+            e.preventDefault();
+            // Clear previous selection
+            for (const entity of this.game.selectedEntities) {
+                entity.selected = false;
+            }
+            // Select all player units
+            this.game.selectedEntities = this.game.units.filter(u => 
+                u.owner === this.game.humanPlayer && u.isAlive() && !u.transportedBy
+            );
+            for (const unit of this.game.selectedEntities) {
+                unit.selected = true;
+            }
+            if (this.game.selectedEntities.length > 0) {
+                showNotification(`Selected ${this.game.selectedEntities.length} units`);
+            }
+            return;
+        }
+
+        // Building hotkeys: P, R, B, W, A, G, T (construction only)
+        // If already placing that building, cancel. Otherwise, start placement
+        const buildingHotkeys = {
+            'p': 'POWER_PLANT',
+            'P': 'POWER_PLANT',
+            'r': 'REFINERY',
+            'R': 'REFINERY',
+            'b': 'BARRACKS',
+            'B': 'BARRACKS',
+            'w': 'WAR_FACTORY',
+            'W': 'WAR_FACTORY',
+            'a': 'AIRFIELD',
+            'A': 'AIRFIELD',
+            'g': 'GUN_TURRET',
+            'G': 'GUN_TURRET',
+            't': 'AA_TURRET',
+            'T': 'AA_TURRET',
+        };
+
+        // Handle building hotkeys (A key prioritizes Airfield over attack move)
+        if (buildingHotkeys[e.key]) {
+            const buildingType = buildingHotkeys[e.key];
+            
+            // If already placing this building, cancel
+            if (this.game.placingBuilding === buildingType) {
+                this.game.cancelBuildingPlacement();
+                return;
+            }
+            
+            // Start building placement
+            this.game.startBuildingPlacement(buildingType);
+            return;
+        }
+
+        // Attack move toggle (only if A wasn't used for Airfield and not placing building)
+        if ((e.key === 'a' || e.key === 'A') && !this.game.placingBuilding) {
             this.game.attackMoveMode = true;
         }
 
-        // Formation hotkeys
-        if (e.key === '1') {
-            // Line formation
-            this.createFormationForSelected(FORMATION_CONFIG.TYPES.LINE);
-        } else if (e.key === '2') {
-            // Box formation
-            this.createFormationForSelected(FORMATION_CONFIG.TYPES.BOX);
-        } else if (e.key === '3') {
-            // Wedge formation
-            this.createFormationForSelected(FORMATION_CONFIG.TYPES.WEDGE);
-        } else if (e.key === '4') {
-            // Column formation
-            this.createFormationForSelected(FORMATION_CONFIG.TYPES.COLUMN);
+        // Control groups: Ctrl+Shift+1-9 to assign, Alt+1-9 to select
+        // Check these BEFORE other number key handlers
+        // Map shifted number keys to actual numbers (when Shift is held, browsers send '!' for 1, '@' for 2, etc.)
+        const shiftNumberMap = {
+            '!': 1, '@': 2, '#': 3, '$': 4, '%': 5,
+            '^': 6, '&': 7, '*': 8, '(': 9
+        };
+        
+        // Helper function to get group number from key
+        // Also checks keyCode and code as fallbacks for better browser compatibility
+        const getGroupNumber = (key, keyCode = null, code = null) => {
+            // Check shifted characters first
+            if (shiftNumberMap[key]) {
+                return shiftNumberMap[key];
+            }
+            // Then check regular number keys
+            const num = parseInt(key.replace('Digit', '') || key);
+            if (!isNaN(num) && num >= 1 && num <= 9) {
+                return num;
+            }
+            // Fallback: Check keyCode (deprecated but still works in some browsers)
+            // KeyCodes: 49='1', 50='2', 51='3', etc. (when Shift: 33='!', 64='@', 35='#', etc.)
+            if (keyCode !== null) {
+                const keyCodeMap = {
+                    33: 1, 64: 2, 35: 3, 36: 4, 37: 5, 94: 6, 38: 7, 42: 8, 40: 9, // Shifted
+                    49: 1, 50: 2, 51: 3, 52: 4, 53: 5, 54: 6, 55: 7, 56: 8, 57: 9  // Regular
+                };
+                if (keyCodeMap[keyCode]) {
+                    return keyCodeMap[keyCode];
+                }
+            }
+            // Fallback: Check code property (e.g., 'Digit2', 'Digit3')
+            if (code) {
+                const codeMatch = code.match(/Digit(\d)/);
+                if (codeMatch) {
+                    const num = parseInt(codeMatch[1]);
+                    if (num >= 1 && num <= 9) {
+                        return num;
+                    }
+                }
+            }
+            return null;
+        };
+        
+        // Check if this is a number key (1-9) or shifted number key (!-()
+        const isNumberKey = (key) => {
+            return (key >= '1' && key <= '9') || 
+                   (key >= 'Digit1' && key <= 'Digit9') ||
+                   (key in shiftNumberMap);
+        };
+        
+        // Ctrl+Shift+Number = assign control group
+        // When Ctrl+Shift is held, browsers send shifted characters (!, @, #, etc.)
+        // Some browsers intercept Ctrl+Shift+2 and Ctrl+Shift+3 for their own shortcuts
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && isNumberKey(e.key)) {
+            // CRITICAL: Prevent default FIRST, before any other checks
+            // This prevents browser from intercepting Ctrl+Shift+2/3
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation(); // Also stop other listeners on same element
+            
+            const groupNum = getGroupNumber(e.key, e.keyCode, e.code);
+            
+            // Debug for problematic keys
+            if (groupNum === 2 || groupNum === 3 || !groupNum) {
+                console.log('Control group key detection:', {
+                    key: e.key,
+                    keyCode: e.keyCode,
+                    code: e.code,
+                    groupNum: groupNum,
+                    ctrlKey: e.ctrlKey,
+                    shiftKey: e.shiftKey,
+                    altKey: e.altKey,
+                    defaultPrevented: e.defaultPrevented,
+                    isNumberKey: isNumberKey(e.key)
+                });
+            }
+            
+            if (!groupNum) {
+                // Not a valid number key, ignore
+                return;
+            }
+            
+            if (!this.game || !this.game.controlGroups) {
+                console.error('Game or controlGroups not initialized!');
+                return;
+            }
+            
+            if (this.game.selectedEntities.length > 0) {
+                // Assign selected entities to control group
+                this.game.controlGroups.set(groupNum, [...this.game.selectedEntities]);
+                showNotification(`Control group ${groupNum} assigned (${this.game.selectedEntities.length} units)`);
+            } else {
+                showNotification(`No units selected (select units first, then Ctrl+Shift+${groupNum})`);
+            }
+            return; // Prevent default and other handlers
+        }
+        
+        // Alt+Number = select control group
+        if ((e.altKey || e.metaKey) && !e.shiftKey && !e.ctrlKey && isNumberKey(e.key)) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const groupNum = getGroupNumber(e.key, e.keyCode, e.code);
+            
+            if (!groupNum) {
+                return;
+            }
+            
+            const group = this.game.controlGroups.get(groupNum);
+            
+            if (group && group.length > 0) {
+                // Filter out dead entities
+                const aliveEntities = group.filter(e => e && e.isAlive && e.isAlive());
+                
+                if (aliveEntities.length > 0) {
+                    // Clear previous selection
+                    for (const entity of this.game.selectedEntities) {
+                        entity.selected = false;
+                    }
+                    
+                    // Select control group
+                    this.game.selectedEntities = aliveEntities;
+                    for (const entity of aliveEntities) {
+                        entity.selected = true;
+                    }
+                    
+                    // Update control group to remove dead entities
+                    this.game.controlGroups.set(groupNum, aliveEntities);
+                    
+                    showNotification(`Control group ${groupNum} selected (${aliveEntities.length} units)`);
+                } else {
+                    // All units dead, remove group
+                    this.game.controlGroups.delete(groupNum);
+                    showNotification(`Control group ${groupNum} is empty (all units destroyed)`);
+                }
+            } else {
+                showNotification(`No control group assigned to ${groupNum} (Ctrl+Shift+${groupNum} to assign)`);
+            }
+            return; // Prevent formation hotkeys
+        }
+        
+        // Formation hotkeys (only if no modifiers and keys 1-4)
+        const isFormationKey = (e.key >= '1' && e.key <= '4') || (e.key >= 'Digit1' && e.key <= 'Digit4');
+        if (isFormationKey && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+            // Number keys 1-4 = formation hotkeys (only if we have selected units and no modifiers)
+            const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit && !e.isHarvester);
+            if (selectedUnits.length >= 2) {
+                if (e.key === '1') {
+                    this.createFormationForSelected(FORMATION_CONFIG.TYPES.LINE);
+                } else if (e.key === '2') {
+                    this.createFormationForSelected(FORMATION_CONFIG.TYPES.BOX);
+                } else if (e.key === '3') {
+                    this.createFormationForSelected(FORMATION_CONFIG.TYPES.WEDGE);
+                } else if (e.key === '4') {
+                    this.createFormationForSelected(FORMATION_CONFIG.TYPES.COLUMN);
+                }
+            }
         }
     }
 
@@ -260,14 +622,65 @@ class InputHandler {
         if (isClick) {
             // Select single entity
             const entity = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
-            if (entity && entity.owner === this.game.humanPlayer) {
-                entity.selected = true;
-                this.game.selectedEntities.push(entity);
+            const now = Date.now();
+            
+            // Check for double-click (select all units of same type)
+            if (entity && entity.owner === this.game.humanPlayer && 
+                this.lastClickEntity === entity && 
+                (now - this.lastClickTime) < this.DOUBLE_CLICK_TIME) {
+                // Double-click detected - select all units of same type
+                const entityType = entity.type;
+                const sameTypeUnits = this.game.units.filter(u => 
+                    u.owner === this.game.humanPlayer && 
+                    u.type === entityType && 
+                    u.isAlive()
+                );
+                
+                // Clear previous selection
+                for (const e of this.game.selectedEntities) {
+                    e.selected = false;
+                }
+                
+                // Select all units of same type (filter out transported units)
+                this.game.selectedEntities = sameTypeUnits.filter(u => !u.transportedBy);
+                for (const unit of sameTypeUnits) {
+                    unit.selected = true;
+                }
+                
+                    showNotification(`Selected ${sameTypeUnits.length} ${entity.stats?.name || entityType}`);
+                
+                // Reset double-click tracking
+                this.lastClickTime = 0;
+                this.lastClickEntity = null;
+                
+                // Enable camera following for selected units
+                if (sameTypeUnits.length > 0) {
+                    const centerX = sameTypeUnits.reduce((sum, u) => sum + u.x, 0) / sameTypeUnits.length;
+                    const centerY = sameTypeUnits.reduce((sum, u) => sum + u.y, 0) / sameTypeUnits.length;
+                    this.game.cameraTarget = { x: centerX, y: centerY };
+                }
+            } else {
+                // Single click - normal selection (skip transported units)
+                if (entity && entity.owner === this.game.humanPlayer && !(entity instanceof Unit && entity.transportedBy)) {
+                    entity.selected = true;
+                    this.game.selectedEntities.push(entity);
+                    
+                    // Enable camera following for single unit
+                    if (entity instanceof Unit) {
+                        this.game.cameraTarget = { x: entity.x, y: entity.y };
+                    }
+                }
+                
+                // Update double-click tracking
+                this.lastClickTime = now;
+                this.lastClickEntity = entity;
             }
         } else {
             // Box selection
             for (const unit of this.game.units) {
                 if (unit.owner !== this.game.humanPlayer) continue;
+                // Skip transported units in box selection
+                if (unit.transportedBy) continue;
 
                 if (rectIntersect(
                     dragX, dragY, dragW, dragH,
@@ -327,13 +740,99 @@ class InputHandler {
         // Check if clicking on resource node
         const clickTile = worldToTile(this.mouseWorldX, this.mouseWorldY);
         const resourceNode = this.game.map.getResourceNode(clickTile.x, clickTile.y);
+        
+        // Handle embark/disembark commands
+        const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit);
+        const hasTransportSelected = selectedUnits.some(u => u.isTransport);
+        const hasNonTransportSelected = selectedUnits.some(u => !u.isTransport && !u.transportedBy);
+        
+        // Check for embark: Selected units right-clicking on a transport
+        // Allow both: units selected clicking on transport, OR transport selected clicking on itself
+        const isClickingOnTransport = target instanceof Unit && target.isTransport && target.owner === this.game.humanPlayer;
+        const isTransportSelected = hasTransportSelected && selectedUnits.length === 1 && selectedUnits[0].isTransport;
+        const isClickingOnSelectedTransport = isClickingOnTransport && isTransportSelected && target === selectedUnits[0];
+        
+        if (hasNonTransportSelected && isClickingOnTransport) {
+            
+            let embarkedCount = 0;
+            let failedCount = 0;
+            
+            for (const unit of selectedUnits) {
+                // Skip if unit is already transported or is a transport itself
+                if (unit.transportedBy || unit.isTransport) continue;
+                
+                // Check if unit can be transported
+                if (target.transportType === 'infantry' && unit.stats.category !== 'infantry') {
+                    failedCount++;
+                    continue; // Skip non-infantry for APC
+                }
+                
+                // Check capacity
+                let hasSpace = false;
+                if (target.transportType === 'all' && target.isNaval) {
+                    // Transport ship - check capacity points
+                    const unitSize = Math.ceil(unit.stats.size || 1);
+                    hasSpace = (target.transportUsed + unitSize <= target.transportCapacity);
+                } else if (target.transportType === 'infantry') {
+                    // APC - check unit count
+                    hasSpace = (target.embarkedUnits.length < target.transportCapacity);
+                }
+                
+                if (!hasSpace) {
+                    failedCount++;
+                    continue; // No space
+                }
+                
+                // Check distance - allow units to move closer if needed
+                const dist = distance(unit.x, unit.y, target.x, target.y);
+                if (dist < TILE_SIZE * 3) { // Within 3 tiles (increased from 2)
+                    if (target.embarkUnit(unit, this.game)) {
+                        embarkedCount++;
+                    } else {
+                        failedCount++;
+                    }
+                } else {
+                    // Unit is too far - move it closer first
+                    unit.moveTo(target.x, target.y, this.game);
+                    // Don't count as failed, just move closer
+                }
+            }
+            
+            if (embarkedCount > 0) {
+                showNotification(`${embarkedCount} unit(s) embarked`);
+                return;
+            } else if (failedCount > 0) {
+                showNotification(`Cannot embark: ${failedCount === selectedUnits.length ? 'Transport full or invalid unit type' : 'Some units cannot embark'}`);
+                // Don't return - allow movement command to proceed
+            }
+        }
+        
+        // Check for disembark: Selected transport right-clicking directly on itself
+        if (isTransportSelected && isClickingOnSelectedTransport) {
+            const transport = selectedUnits[0];
+            if (transport.isTransport && transport.embarkedUnits.length > 0) {
+                // Only disembark when clicking directly on the transport
+                let disembarkedCount = 0;
+                const unitsToDisembark = [...transport.embarkedUnits];
+                for (const unit of unitsToDisembark) {
+                    if (transport.disembarkUnit(unit, this.game)) {
+                        disembarkedCount++;
+                    }
+                }
+                if (disembarkedCount > 0) {
+                    showNotification(`${disembarkedCount} unit(s) disembarked`);
+                    return;
+                }
+            }
+        }
 
         // Check if we have a formation - move formation as a group
-        const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit && !e.isHarvester);
-        if (selectedUnits.length >= 2) {
+        // Filter selectedUnits to exclude harvesters for formation logic
+        const selectedUnitsForFormation = selectedUnits.filter(e => !e.isHarvester);
+        if (selectedUnitsForFormation.length >= 2) {
             // Check if units are in a formation
             const formationIds = new Set();
-            for (const unit of selectedUnits) {
+            for (const unit of selectedUnitsForFormation) {
                 if (unit.formationId) {
                     formationIds.add(unit.formationId);
                 }
@@ -376,13 +875,15 @@ class InputHandler {
         }
         
         // For non-formation groups, spread out destinations to reduce collisions
-        if (selectedUnits.length > 1 && selectedUnits.length <= 20) {
+        // Filter out transported units but keep transports
+        const unitsForGroupMove = selectedUnitsForFormation.filter(u => !u.transportedBy || u.isTransport);
+        if (unitsForGroupMove.length > 1 && unitsForGroupMove.length <= 20) {
             // Spread destinations in a small area around the click point
-            const spreadRadius = Math.min(selectedUnits.length * 0.5, 5) * TILE_SIZE;
-            const angleStep = (Math.PI * 2) / selectedUnits.length;
+            const spreadRadius = Math.min(unitsForGroupMove.length * 0.5, 5) * TILE_SIZE;
+            const angleStep = (Math.PI * 2) / unitsForGroupMove.length;
             
-            for (let i = 0; i < selectedUnits.length; i++) {
-                const unit = selectedUnits[i];
+            for (let i = 0; i < unitsForGroupMove.length; i++) {
+                const unit = unitsForGroupMove[i];
                 const angle = i * angleStep;
                 const offsetX = Math.cos(angle) * spreadRadius * Math.random();
                 const offsetY = Math.sin(angle) * spreadRadius * Math.random();
@@ -415,7 +916,12 @@ class InputHandler {
         }
 
         // Handle individual units (single unit or large groups)
-        for (const entity of this.game.selectedEntities) {
+        // Filter out transported units from selection for movement commands (but allow transports themselves)
+        const unitsToCommand = this.game.selectedEntities.filter(e => 
+            e instanceof Unit && (!e.transportedBy || e.isTransport)
+        );
+        
+        for (const entity of unitsToCommand) {
             if (!(entity instanceof Unit)) continue;
             
             // Airplanes can only attack, not move (or return to airfield)
@@ -487,8 +993,9 @@ class InputHandler {
     }
 
     findEntityAt(worldX, worldY) {
-        // Check units first
+        // Check units first (skip transported units - they shouldn't be clickable)
         for (const unit of this.game.units) {
+            if (unit.transportedBy) continue; // Skip transported units
             const dist = distance(worldX, worldY, unit.x, unit.y);
             if (dist < 20) {
                 return unit;
@@ -524,8 +1031,10 @@ class InputHandler {
     onMinimapClick(e) {
         const minimap = document.getElementById('minimap');
         if (!minimap || !this.game.map) return; // Safety check
-        
+
         const rect = minimap.getBoundingClientRect();
+        
+        // Enhanced: Jump camera to clicked location on minimap
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 

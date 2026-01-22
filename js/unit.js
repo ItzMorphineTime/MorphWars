@@ -30,6 +30,8 @@ class Unit extends Entity {
         this.lastRepathTime = 0;
         this.lastCombatPathTime = 0; // Track last time we pathed in combat
         this.lastTargetSearchTime = 0; // Track last enemy search
+        this.lastPathfindingTime = 0; // Track last pathfinding request (for throttling)
+        this.pendingPathRequest = null; // Store pending path request if throttled
 
         // Collision tracking for ground units
         this.collisionCount = 0;
@@ -64,6 +66,18 @@ class Unit extends Entity {
         this.formationId = null;
         this.formationIndex = null;
         this.userCommandTime = 0; // Track when user gave a command (to prevent formation override)
+
+        // Transport specific
+        this.isTransport = stats.isTransport || false;
+        this.transportCapacity = stats.transportCapacity || 0;
+        this.transportType = stats.transportType || 'none';
+        this.embarkedUnits = []; // Units currently inside this transport
+        this.transportUsed = 0; // Current capacity used (for transport ships with size-based capacity)
+        this.transportedBy = null; // Transport unit that is carrying this unit (null if not transported)
+        this.isNaval = stats.isNaval || false;
+        this.isSubmarine = stats.isSubmarine || false;
+        this.stealth = stats.stealth || false;
+        this.stealthDetected = false; // Whether submarine has been detected
     }
 
     moveTo(x, y, game) {
@@ -92,14 +106,46 @@ class Unit extends Entity {
             console.log(`[${ownerType} ${this.type}] New destination set: (${targetTile.x}, ${targetTile.y})`);
         }
 
-        this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size);
-        this.pathIndex = 0;
+        // Pathfinding throttling: prevent too many pathfinding requests
+        const now = Date.now();
+        const timeSinceLastPath = now - this.lastPathfindingTime;
+        
+        // Calculate throttle interval based on unit type
+        let throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL;
+        if (this.stats.damage && !this.isHarvester) {
+            // Combat units get priority (faster pathfinding)
+            throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL * PATHFINDING_THROTTLE.COMBAT_PRIORITY_BONUS;
+        } else if (this.isHarvester) {
+            // Harvesters get lower priority (slower pathfinding)
+            throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL * PATHFINDING_THROTTLE.HARVESTER_PENALTY;
+        }
+        
+        if (timeSinceLastPath < throttleInterval) {
+            // Throttled - store request for later
+            this.pendingPathRequest = {
+                startX: currentTile.x,
+                startY: currentTile.y,
+                endX: targetTile.x,
+                endY: targetTile.y
+            };
+            // Use existing path if available, or wait
+            if (!this.path) {
+                // No path yet - will be calculated on next update when throttle expires
+                return;
+            }
+        } else {
+            // Can pathfind now
+            this.lastPathfindingTime = now;
+            this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval);
+            this.pathIndex = 0;
+            this.pendingPathRequest = null;
 
-        // Debug: Log if pathfinding failed
-        if (shouldLog && !this.path) {
-            console.log(`[${ownerType} ${this.type}] PATHFINDING FAILED from (${currentTile.x}, ${currentTile.y}) to (${targetTile.x}, ${targetTile.y})`);
-        } else if (shouldLog && this.path) {
-            console.log(`[${ownerType} ${this.type}] Path found with ${this.path.length} steps`);
+            // Debug: Log if pathfinding failed
+            if (shouldLog && !this.path) {
+                console.log(`[${ownerType} ${this.type}] PATHFINDING FAILED from (${currentTile.x}, ${currentTile.y}) to (${targetTile.x}, ${targetTile.y})`);
+            } else if (shouldLog && this.path) {
+                console.log(`[${ownerType} ${this.type}] Path found with ${this.path.length} steps`);
+            }
         }
     }
 
@@ -146,6 +192,41 @@ class Unit extends Entity {
 
     update(deltaTime, game) {
         if (!this.isAlive()) return;
+
+        // If unit is being transported, just update position and skip other logic
+        if (this.transportedBy) {
+            this.x = this.transportedBy.x;
+            this.y = this.transportedBy.y;
+            return;
+        }
+
+        // Update transported units position (for transports)
+        if (this.isTransport) {
+            this.updateTransportedUnits();
+        }
+
+        // Process pending pathfinding request if throttle expired
+        if (this.pendingPathRequest) {
+            const now = Date.now();
+            const timeSinceLastPath = now - this.lastPathfindingTime;
+            
+            let throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL;
+            if (this.stats.damage && !this.isHarvester) {
+                throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL * PATHFINDING_THROTTLE.COMBAT_PRIORITY_BONUS;
+            } else if (this.isHarvester) {
+                throttleInterval = PATHFINDING_THROTTLE.MIN_INTERVAL * PATHFINDING_THROTTLE.HARVESTER_PENALTY;
+            }
+            
+            if (timeSinceLastPath >= throttleInterval) {
+                // Throttle expired - process pending request
+                const currentTile = worldToTile(this.x, this.y);
+                this.path = findPath(game.map, currentTile.x, currentTile.y, 
+                    this.pendingPathRequest.endX, this.pendingPathRequest.endY, this.stats.size, this.isHarvester);
+                this.pathIndex = 0;
+                this.lastPathfindingTime = now;
+                this.pendingPathRequest = null;
+            }
+        }
 
         // Update attack cooldown
         if (this.attackCooldown > 0) {
@@ -201,6 +282,10 @@ class Unit extends Entity {
                 if (this.stuckCounter >= 2) {  // Stuck for 10+ seconds
                     // Find alternative instead of retrying same action
                     if (this.harvestState === 'moving_to_resource' || this.harvestState === 'harvesting') {
+                        // Release resource node
+                        if (this.targetResource && this.game && this.game.map) {
+                            this.game.map.removeHarvesterFromNode(this.targetResource, this);
+                        }
                         // Try a different resource (exclude current one)
                         const oldResource = this.targetResource;
                         this.targetResource = null;
@@ -288,12 +373,57 @@ class Unit extends Entity {
                 const otherHelicopter = targetTile && targetTile.unit && targetTile.unit !== this && targetTile.unit.stats.category === 'air';
                 canMove = targetTile && !targetTile.blocked && !otherHelicopter;
             } else if (this.isHarvester) {
-                // Harvesters ONLY check other harvesters - ignore terrain/buildings/units
+                // Harvesters can pass through other harvesters - no collision between harvesters
+                // But still respect terrain and buildings
+                // Special case: Harvesters can enter refineries to deliver resources
+                // If a non-harvester unit is blocking, we'll push it out of the way (handled below)
                 if (!targetTile) {
                     canMove = false;
                 } else {
-                    const otherHarvester = targetTile.unit && targetTile.unit !== this && targetTile.unit.isHarvester;
-                    canMove = !otherHarvester;
+                    // Check if there's a building - harvesters can enter refineries
+                    const isRefinery = targetTile.building && targetTile.building.stats.isRefinery;
+                    const buildingAllowsUnits = targetTile.building && targetTile.building.stats.allowsUnitsOnTop;
+                    // Allow movement if: not blocked OR building allows units OR is refinery
+                    // Note: We allow movement even if there's a unit - we'll push it out of the way
+                    const tileIsPassable = !targetTile.blocked || buildingAllowsUnits || isRefinery;
+                    
+                    canMove = tileIsPassable;
+                }
+            } else if (this.isNaval) {
+                // Naval units: can move on water or within 1 tile of land
+                // Can pass through other naval units
+                if (!targetTile) {
+                    canMove = false;
+                } else {
+                    // Check if tile is valid for naval movement (water or near water)
+                    const isNavalValid = game.map.isNavalValid(newTile.x, newTile.y);
+                    const isWaterTile = game.map.isWater(newTile.x, newTile.y);
+                    const buildingAllowsUnits = targetTile.building && targetTile.building.stats.allowsUnitsOnTop;
+                    
+                    // For naval units: water tiles are always passable even if marked as blocked
+                    // Non-water tiles (within 1 tile of water) must not be blocked OR building allows units
+                    let tileIsPassable;
+                    if (isWaterTile) {
+                        // Water tiles are always passable for naval units, regardless of blocked status
+                        tileIsPassable = true;
+                    } else {
+                        // Non-water tiles (near water) must not be blocked OR building allows units
+                        tileIsPassable = isNavalValid && (!targetTile.blocked || buildingAllowsUnits);
+                    }
+                    
+                    // Naval units can pass through other naval units
+                    let noOtherUnit = true;
+                    if (targetTile.unit && targetTile.unit !== this) {
+                        if (targetTile.unit.isNaval) {
+                            // Other naval unit - allow passing through
+                            noOtherUnit = true;
+                        } else {
+                            // Non-naval unit - block
+                            noOtherUnit = false;
+                        }
+                    }
+                    
+                    canMove = tileIsPassable && noOtherUnit;
                 }
             } else {
                 // Ground units: NEW collision system
@@ -378,7 +508,7 @@ class Unit extends Entity {
                                 const worldPos = tileToWorld(emptyTile.x, emptyTile.y);
                                 this.targetX = worldPos.x;
                                 this.targetY = worldPos.y;
-                                this.path = findPath(game.map, oldTile.x, oldTile.y, emptyTile.x, emptyTile.y, this.stats.size);
+                                this.path = findPath(game.map, oldTile.x, oldTile.y, emptyTile.x, emptyTile.y, this.stats.size, this.isHarvester);
                                 this.pathIndex = 0;
                             }
                         }
@@ -391,14 +521,29 @@ class Unit extends Entity {
                 // Harvesters push non-harvester ground units out of the way
                 if (this.isHarvester && targetTile.unit && targetTile.unit !== this && !targetTile.unit.isHarvester) {
                     const blockedUnit = targetTile.unit;
+                    // Find an empty tile nearby to move the blocking unit to
                     const emptyTile = this.findAdjacentEmptyTile(game, newTile.x, newTile.y);
                     if (emptyTile) {
+                        // Move the blocking unit out of the way
                         const blockedOldTile = worldToTile(blockedUnit.x, blockedUnit.y);
                         game.map.clearUnit(blockedOldTile.x, blockedOldTile.y);
                         const emptyWorldPos = tileToWorld(emptyTile.x, emptyTile.y);
                         blockedUnit.x = emptyWorldPos.x;
                         blockedUnit.y = emptyWorldPos.y;
                         game.map.setUnit(emptyTile.x, emptyTile.y, blockedUnit);
+                        
+                        // Tell the unit to move to that position (so it doesn't just stand there)
+                        if (blockedUnit instanceof Unit && !blockedUnit.isHarvester) {
+                            blockedUnit.moveTo(emptyWorldPos.x, emptyWorldPos.y, game);
+                        }
+                    } else {
+                        // No adjacent empty tile found - try to find a nearby empty tile for the blocking unit
+                        const nearbyTile = this.findNearestEmptyTile(game, newTile.x, newTile.y);
+                        if (nearbyTile && blockedUnit instanceof Unit && !blockedUnit.isHarvester) {
+                            const nearbyWorldPos = tileToWorld(nearbyTile.x, nearbyTile.y);
+                            // Tell the unit to move away
+                            blockedUnit.moveTo(nearbyWorldPos.x, nearbyWorldPos.y, game);
+                        }
                     }
                 }
 
@@ -422,7 +567,7 @@ class Unit extends Entity {
 
                     if (this.repathAttempts < 10) {
                         const destTile = this.path[this.path.length - 1];
-                        this.path = findPath(game.map, oldTile.x, oldTile.y, destTile.x, destTile.y, this.stats.size);
+                        this.path = findPath(game.map, oldTile.x, oldTile.y, destTile.x, destTile.y, this.stats.size, this.isHarvester);
                         this.pathIndex = 0;
                     } else {
                         this.path = null;
@@ -467,13 +612,15 @@ class Unit extends Entity {
             const now = Date.now();
             const needsNewPath = !this.path || this.pathIndex >= this.path.length;
             const cooldownExpired = now - this.lastCombatPathTime > UNIT_BEHAVIOR.COMBAT_PATH_COOLDOWN;
+            const throttleExpired = now - this.lastPathfindingTime >= (PATHFINDING_THROTTLE.MIN_INTERVAL * PATHFINDING_THROTTLE.COMBAT_PRIORITY_BONUS);
 
-            if (needsNewPath && cooldownExpired) {
+            if (needsNewPath && cooldownExpired && throttleExpired) {
                 const currentTile = worldToTile(this.x, this.y);
                 const targetTile = worldToTile(this.targetEnemy.x, this.targetEnemy.y);
-                this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size);
+                this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval);
                 this.pathIndex = 0;
                 this.lastCombatPathTime = now;
+                this.lastPathfindingTime = now; // Update general pathfinding throttle too
             }
 
             if (this.path) {
@@ -537,13 +684,29 @@ class Unit extends Entity {
 
         damage = Math.floor(damage);
 
+        // Add visual effects for combat feedback
+        if (game.effects) {
+            // Add projectile trail
+            game.effects.addProjectile(this.x, this.y, target.x, target.y, damageType);
+            
+            // Add muzzle flash
+            const angle = Math.atan2(target.y - this.y, target.x - this.x);
+            game.effects.addMuzzleFlash(this.x, this.y, angle);
+        }
+
         // Grenadier splash damage
         if (this.stats.splashRadius && this.stats.splashRadius > 0) {
             this.applySplashDamage(target, damage, game);
             return;
         }
 
-        const destroyed = target.takeDamage(damage);
+        const destroyed = target.takeDamage(damage, game);
+        
+        // Add damage number visual feedback
+        if (game.effects) {
+            const isCritical = damage > this.stats.damage * 1.5; // Critical if 50% more than base
+            game.effects.addDamageNumber(target.x, target.y, damage, isCritical);
+        }
 
         if (destroyed) {
             this.gainExperience();
@@ -569,6 +732,12 @@ class Unit extends Entity {
                         game.stats.buildingsDestroyed++;
                     }
                 }
+            }
+
+            // Add death animation
+            if (game.effects) {
+                const entityType = target instanceof Unit ? 'unit' : 'building';
+                game.effects.addDeathAnimation(target.x, target.y, entityType);
             }
 
             // Remove from game
@@ -623,6 +792,19 @@ class Unit extends Entity {
             if (unit.owner === this.owner || !unit.isAlive()) continue;
             // Skip airplanes unless this unit can attack them
             if (unit.isAirplane && !canAttackAir) continue;
+            
+            // Submarine stealth detection - only detect if within detection range
+            if (unit.isSubmarine && unit.stealth && !unit.stealthDetected) {
+                const detectionRange = 3 * TILE_SIZE; // Detection range for submarines
+                const dist = distance(this.x, this.y, unit.x, unit.y);
+                if (dist <= detectionRange) {
+                    // Detected! Mark submarine as detected
+                    unit.stealthDetected = true;
+                } else {
+                    // Not detected - skip this submarine
+                    continue;
+                }
+            }
 
             const dist = distance(this.x, this.y, unit.x, unit.y);
             if (dist < searchRadius && dist < nearestDist) {
@@ -648,9 +830,11 @@ class Unit extends Entity {
     updateHarvester(deltaTime, game) {
         switch (this.harvestState) {
             case 'idle':
-                // Find nearest resource node
+                // Find nearest resource node (respects max 2 harvesters per node)
                 this.targetResource = this.findNearestResource(game);
                 if (this.targetResource) {
+                    // Register this harvester with the resource node
+                    game.map.addHarvesterToNode(this.targetResource, this);
                     this.harvestState = 'moving_to_resource';
                     const resourcePos = tileToWorld(this.targetResource.x, this.targetResource.y);
                     this.moveTo(resourcePos.x, resourcePos.y, game);
@@ -671,6 +855,10 @@ class Unit extends Entity {
 
             case 'harvesting':
                 if (!this.targetResource || this.targetResource.resources <= 0) {
+                    // Release resource node
+                    if (this.targetResource) {
+                        game.map.removeHarvesterFromNode(this.targetResource, this);
+                    }
                     this.harvestState = 'idle';
                     this.targetResource = null;
                 } else {
@@ -678,6 +866,10 @@ class Unit extends Entity {
                     this.cargo += harvested;
 
                     if (this.cargo >= this.stats.maxCargo) {
+                        // Release resource node before returning
+                        if (this.targetResource) {
+                            game.map.removeHarvesterFromNode(this.targetResource, this);
+                        }
                         this.harvestState = 'returning';
                         this.targetRefinery = this.findNearestRefinery(game);
                         if (this.targetRefinery) {
@@ -706,6 +898,7 @@ class Unit extends Entity {
                         this.cargo = 0;
                         this.harvestState = 'idle';
                         this.targetRefinery = null;
+                        // Note: targetResource is already released in 'harvesting' state
                     }
                 }
                 break;
@@ -715,10 +908,17 @@ class Unit extends Entity {
     findNearestResource(game) {
         let nearest = null;
         let nearestDist = Infinity;
+        const MAX_HARVESTERS_PER_NODE = 2;
 
         for (const node of game.map.resourceNodes) {
             if (node.resources <= 0) continue;
             if (this.avoidResource && node === this.avoidResource) continue;  // Skip problematic resource
+
+            // Check if node already has max harvesters
+            const harvesterCount = game.map.getHarvesterCountForNode(node);
+            if (harvesterCount >= MAX_HARVESTERS_PER_NODE) {
+                continue; // Skip this node - already at capacity
+            }
 
             const dist = distance(
                 this.x / TILE_SIZE, this.y / TILE_SIZE,
@@ -898,7 +1098,7 @@ class Unit extends Entity {
             const damageMultiplier = 1.0 - (dist / splashRadius) * 0.5; // 50-100% damage based on distance
             const actualDamage = Math.floor(baseDamage * damageMultiplier);
 
-            const destroyed = target.takeDamage(actualDamage);
+            const destroyed = target.takeDamage(actualDamage, game);
             
             // Track stats
             if (destroyed && game.stats) {
@@ -1017,15 +1217,15 @@ class Unit extends Entity {
                         if (this.specialPowerType === 'recon') {
                             // Recon complete - remove airplane
                             showNotification('Recon sweep complete');
-                            this.takeDamage(this.hp); // Destroy to remove
+                            this.takeDamage(this.hp, game); // Destroy to remove
                         } else if (this.specialPowerType === 'airstrike') {
                             // Execute airstrike
                             this.executeAirstrike(game);
-                            this.takeDamage(this.hp); // Destroy after strike
+                            this.takeDamage(this.hp, game); // Destroy after strike
                         } else if (this.specialPowerType === 'airdrop') {
                             // Execute airdrop
                             this.executeAirdrop(game);
-                            this.takeDamage(this.hp); // Destroy after drop
+                            this.takeDamage(this.hp, game); // Destroy after drop
                         }
                         break;
                     }
@@ -1210,7 +1410,7 @@ class Unit extends Entity {
             const damageMultiplier = 1.0 - (dist / splashRadius) * 0.5;
             const actualDamage = Math.floor(baseDamage * damageMultiplier);
 
-            const destroyed = t.takeDamage(actualDamage);
+                const destroyed = t.takeDamage(actualDamage, game);
 
             // Track stats
             if (destroyed && game.stats) {
@@ -1243,7 +1443,7 @@ class Unit extends Entity {
 
             const dist = distance(this.strikeX, this.strikeY, unit.x, unit.y);
             if (dist <= radius) {
-                const destroyed = unit.takeDamage(this.strikeDamage);
+                const destroyed = unit.takeDamage(this.strikeDamage, game);
                 if (destroyed) {
                     const tile = worldToTile(unit.x, unit.y);
                     game.map.clearUnit(tile.x, tile.y);
@@ -1257,7 +1457,7 @@ class Unit extends Entity {
 
             const dist = distance(this.strikeX, this.strikeY, building.x, building.y);
             if (dist <= radius) {
-                building.takeDamage(this.strikeDamage);
+                building.takeDamage(this.strikeDamage, game);
             }
         }
 
@@ -1300,5 +1500,202 @@ class Unit extends Entity {
         }
 
         showNotification(`Air drop complete - ${this.airdropUnits} units deployed`);
+    }
+
+    // Transport methods
+    embarkUnit(unit, game) {
+        if (!this.isTransport) return false;
+        if (!this.isAlive()) return false;
+        if (unit.transportedBy) return false; // Already transported
+        if (unit === this) return false; // Can't transport itself
+        
+        // Check if unit can be transported
+        if (this.transportType === 'infantry' && unit.stats.category !== 'infantry') {
+            return false;
+        }
+        
+        // Check capacity BEFORE adding
+        let hasSpace = false;
+        if (this.transportType === 'all' && this.isNaval) {
+            // Transport ship uses capacity points
+            const unitSize = Math.ceil(unit.stats.size || 1);
+            hasSpace = (this.transportUsed + unitSize <= this.transportCapacity);
+            if (hasSpace) {
+                this.transportUsed += unitSize;
+            }
+        } else {
+            // APC uses unit count
+            hasSpace = (this.embarkedUnits.length < this.transportCapacity);
+        }
+        
+        if (!hasSpace) {
+            return false;
+        }
+        
+        // Remove unit from map
+        const unitTile = worldToTile(unit.x, unit.y);
+        const tile = game.map.getTile(unitTile.x, unitTile.y);
+        if (tile && tile.unit === unit) {
+            game.map.clearUnit(unitTile.x, unitTile.y);
+        }
+        
+        // Clear unit's path and commands
+        unit.path = null;
+        unit.targetEnemy = null;
+        unit.targetX = this.x;
+        unit.targetY = this.y;
+        
+        // Add to transport
+        this.embarkedUnits.push(unit);
+        unit.transportedBy = this;
+        
+        return true;
+    }
+
+    disembarkUnit(unit, game) {
+        if (!this.embarkedUnits.includes(unit)) return false;
+        
+        // Find nearby empty tile
+        const transportTile = worldToTile(this.x, this.y);
+        
+        // Search in expanding radius for a valid tile
+        for (let radius = 1; radius <= 5; radius++) {
+            const angleStep = (Math.PI * 2) / (radius * 8);
+            
+            for (let angle = 0; angle < Math.PI * 2; angle += angleStep) {
+                const offsetX = Math.round(Math.cos(angle) * radius);
+                const offsetY = Math.round(Math.sin(angle) * radius);
+                const tileX = transportTile.x + offsetX;
+                const tileY = transportTile.y + offsetY;
+                
+                const tile = game.map.getTile(tileX, tileY);
+                if (!tile || tile.blocked || tile.unit || tile.building) continue;
+                
+                // For naval transports, check if it's a valid disembark location
+                if (this.isNaval && !game.map.isCoastline(tileX, tileY)) continue;
+                
+                // Found a valid tile - disembark here
+                return this.disembarkUnitAt(unit, game, tileX, tileY);
+            }
+        }
+        
+        return false; // No space to disembark
+    }
+
+    disembarkAll(game) {
+        // Create a copy of the array since we'll be modifying it
+        const unitsToDisembark = [...this.embarkedUnits];
+        
+        // Find available tiles around the transport in expanding radius
+        const transportTile = worldToTile(this.x, this.y);
+        const usedTiles = new Set();
+        
+        // Try to place units in a circle around the transport
+        for (let radius = 1; radius <= 5 && unitsToDisembark.length > 0; radius++) {
+            const angleStep = (Math.PI * 2) / (radius * 8); // More positions at larger radius
+            
+            for (let angle = 0; angle < Math.PI * 2 && unitsToDisembark.length > 0; angle += angleStep) {
+                const offsetX = Math.round(Math.cos(angle) * radius);
+                const offsetY = Math.round(Math.sin(angle) * radius);
+                const tileX = transportTile.x + offsetX;
+                const tileY = transportTile.y + offsetY;
+                
+                // Check if tile is valid and not already used
+                const tileKey = `${tileX},${tileY}`;
+                if (usedTiles.has(tileKey)) continue;
+                
+                const tile = game.map.getTile(tileX, tileY);
+                if (!tile || tile.blocked || tile.unit || tile.building) continue;
+                
+                // For naval transports, check if it's a valid disembark location
+                if (this.isNaval && !game.map.isCoastline(tileX, tileY)) continue;
+                
+                // Try to disembark the next unit here
+                const unit = unitsToDisembark[0];
+                if (this.disembarkUnitAt(unit, game, tileX, tileY)) {
+                    usedTiles.add(tileKey);
+                    unitsToDisembark.shift();
+                }
+            }
+        }
+    }
+    
+    disembarkUnitAt(unit, game, tileX, tileY) {
+        if (!this.embarkedUnits.includes(unit)) return false;
+        if (!unit || !unit.isAlive()) return false;
+        
+        const tile = game.map.getTile(tileX, tileY);
+        if (!tile || tile.blocked || tile.unit) return false;
+        
+        // Remove from transport FIRST
+        const index = this.embarkedUnits.indexOf(unit);
+        if (index > -1) {
+            this.embarkedUnits.splice(index, 1);
+            if (this.isNaval && this.transportType === 'all') {
+                const unitSize = Math.ceil(unit.stats.size || 1);
+                this.transportUsed = Math.max(0, this.transportUsed - unitSize);
+            }
+        }
+        
+        // Clear transportedBy BEFORE placing on map
+        unit.transportedBy = null;
+        
+        // Place unit on map
+        const worldPos = tileToWorld(tileX, tileY);
+        unit.x = worldPos.x;
+        unit.y = worldPos.y;
+        
+        // Only set on map if not naval (naval units don't go on map grid)
+        if (unit.stats.category !== 'naval') {
+            game.map.setUnit(tileX, tileY, unit);
+        }
+        
+        // Clear unit's path so it can move after disembark
+        unit.path = null;
+        unit.targetEnemy = null;
+        
+        return true;
+    }
+
+    getEmbarkedCount() {
+        return this.embarkedUnits.length;
+    }
+
+    getTransportCapacity() {
+        if (this.isNaval && this.transportType === 'all') {
+            return this.transportCapacity; // Capacity points
+        }
+        return this.transportCapacity; // Unit count
+    }
+
+    getTransportUsed() {
+        if (this.isNaval && this.transportType === 'all') {
+            return this.transportUsed;
+        }
+        return this.embarkedUnits.length;
+    }
+
+    // Override takeDamage to auto-disembark when transport is destroyed
+    takeDamage(damage, game = null) {
+        const wasAlive = this.isAlive();
+        const destroyed = super.takeDamage(damage);
+        
+        // If transport was destroyed, disembark all units
+        if (wasAlive && destroyed && this.isTransport && this.embarkedUnits.length > 0 && game) {
+            this.disembarkAll(game);
+        }
+        
+        return destroyed;
+    }
+
+    // Update transported units position
+    updateTransportedUnits() {
+        if (!this.isTransport) return;
+        
+        // Move all embarked units with the transport
+        for (const unit of this.embarkedUnits) {
+            unit.x = this.x;
+            unit.y = this.y;
+        }
     }
 }

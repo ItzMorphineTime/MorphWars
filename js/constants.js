@@ -178,7 +178,7 @@ const UNIT_TYPES = {
         name: 'APC',
         cost: 800,
         hp: 200,
-        speed: 3.0,
+        speed: 3.2,
         sight: 6,
         buildTime: 9,
         damage: 15,
@@ -189,6 +189,9 @@ const UNIT_TYPES = {
         category: 'vehicle',
         tier: 2,
         size: 1.5,
+        isTransport: true,
+        transportCapacity: 5, // Can carry up to 10 infantry units
+        transportType: 'infantry', // Only infantry can embark
     },
 
     // Vehicles (T3)
@@ -280,6 +283,61 @@ const UNIT_TYPES = {
         maxAmmo: 3,
         ignoresCollision: true,
         isAirplane: true, // Special flag for airplane behavior
+    },
+
+    // Naval units
+    SUBMARINE: {
+        name: 'Submarine',
+        cost: 1500,
+        hp: 300,
+        speed: 2.5,
+        sight: 5,
+        buildTime: 16,
+        damage: 80,
+        attackSpeed: 2.0,
+        range: 6,
+        damageType: 'explosive',
+        armor: 'light',
+        category: 'naval',
+        tier: 2,
+        size: 2,
+        isNaval: true,
+        isSubmarine: true,
+        stealth: true, // Hidden until detected
+    },
+    WARSHIP: {
+        name: 'Warship',
+        cost: 2500,
+        hp: 800,
+        speed: 2.0,
+        sight: 8,
+        buildTime: 20,
+        damage: 100,
+        attackSpeed: 1.5,
+        range: 10,
+        damageType: 'shell',
+        armor: 'medium',
+        category: 'naval',
+        tier: 2,
+        size: 3,
+        isNaval: true,
+        canAttackGround: true, // Can attack ground units near coast
+    },
+    TRANSPORT_SHIP: {
+        name: 'Transport Ship',
+        cost: 1800,
+        hp: 500,
+        speed: 2.5,
+        sight: 6,
+        buildTime: 18,
+        armor: 'light',
+        category: 'naval',
+        tier: 2,
+        size: 3,
+        isNaval: true,
+        isTransport: true,
+        transportCapacity: 50, // Total capacity points (infantry = 1, vehicles = 3, etc.)
+        transportType: 'all', // Can transport any unit type
     },
 };
 
@@ -464,6 +522,21 @@ const BUILDING_TYPES = {
         tier: 1,
         revealsMap: true,
     },
+    PORT: {
+        name: 'Port',
+        cost: 3000,
+        hp: 1000,
+        buildTime: 30,
+        powerGenerate: 0,
+        powerConsume: 60,
+        sight: 6,
+        width: 4,
+        height: 3,
+        tier: 2,
+        produces: ['naval'],
+        requiresCoastline: true, // Must be placed adjacent to water
+        allowsUnitsOnTop: true, // Naval units can move through/on port
+    },
 };
 
 // Damage multipliers
@@ -551,6 +624,21 @@ const COLLISION_CONFIG = {
     MAX_COLLISIONS: 5,              // Stop after 5 collisions
     MAX_DESTINATION_CHANGES: 3,     // Stop after 3 destination changes
     SEARCH_RADIUS: 10,              // Search radius for alternate destinations (tiles)
+};
+
+// Pathfinding throttling configuration
+const PATHFINDING_THROTTLE = {
+    MIN_INTERVAL: 500,              // Minimum time between pathfinding requests per unit (ms)
+    COMBAT_PRIORITY_BONUS: 0.5,    // Combat units get 50% faster pathfinding (250ms)
+    HARVESTER_PENALTY: 1.0,        // Harvesters wait 50% longer (500ms) - lower priority
+};
+
+// Frustum culling configuration
+const FRUSTUM_CULLING = {
+    ENABLED: true,                  // Enable/disable frustum culling
+    RENDER_MARGIN: 250,             // Render margin in pixels for smooth scrolling (entities outside viewport but within margin are still rendered)
+    ENABLE_FOG_CHECK: true,          // Also check fog of war visibility (can disable for performance testing)
+    CACHE_VISIBILITY: true,          // Cache visibility calculations per frame (reduces redundant checks)
 };
 
 // Debug logging toggles
@@ -722,4 +810,54 @@ const CONSTRUCTION_CONFIG = {
     BASE_SPEED: 1.0,                    // Base construction speed multiplier
     LOW_POWER_PENALTY: 0.25,            // 75% slower when power < 100%
     HIGH_POWER_BONUS: 1.5,              // 50% faster when power > 150%
+};
+
+// Visual Effects constants
+const EFFECTS_CONFIG = {
+    DAMAGE_NUMBER: {
+        BASE_SIZE: 12,                  // Base font size in pixels
+        CRITICAL_SIZE_MULTIPLIER: 1.5,  // Critical hits are 1.5x larger
+        BASE_VELOCITY: -30,             // Initial upward velocity (negative = up)
+        VELOCITY_DECAY: 0.95,           // Velocity decay per frame (0.95 = slows down)
+        LIFETIME: 1000,                  // Lifetime in milliseconds
+        COLOR_NORMAL: '#ffff00',         // Yellow for normal damage
+        COLOR_CRITICAL: '#ff0000',       // Red for critical hits
+    },
+    PROJECTILE: {
+        SPEED: 8,                        // Pixels per frame
+        SIZE: 3,                         // Radius in pixels
+        TRAIL_SIZE: 5,                   // Trail effect radius
+        LIFETIME: 500,                   // Max lifetime in milliseconds
+    },
+    MUZZLE_FLASH: {
+        LIFETIME: 50,                    // Very short - 50ms
+        WIDTH: 6,                        // Width in pixels
+        HEIGHT: 12,                       // Height in pixels
+        COLOR: '#ffff00',                 // Yellow flash
+    },
+    DEATH_ANIMATION: {
+        LIFETIME: 500,                   // 0.5 seconds
+        MAX_SIZE: 20,                    // Maximum size in pixels
+        COLOR: '#ff0000',                 // Red explosion
+    },
+};
+
+// Camera movement constants
+const CAMERA_CONFIG = {
+    EDGE_SCROLL_MARGIN: 0,              // Pixels from edge to trigger edge scrolling
+    EDGE_SCROLL_SPEED: 5,               // Pixels per frame for edge scrolling (increased from 10)
+    MIDDLE_MOUSE_PAN_SPEED: 3.0,         // Multiplier for middle mouse panning
+    ZOOM_SPEED: 0.1,                     // Zoom speed per wheel event
+    MIN_ZOOM: 0.5,                       // Minimum zoom level
+    MAX_ZOOM: 2.0,                       // Maximum zoom level
+    SMOOTH_FOLLOW_SPEED: 0.1,            // Speed for smooth camera following (0-1, higher = faster)
+};
+
+// Object pooling configuration
+const POOLING_CONFIG = {
+    ENABLE_EFFECTS_POOLING: false,       // Enable object pooling for effects (can reduce GC pauses)
+    DAMAGE_NUMBER_POOL_SIZE: 20,         // Initial pool size for damage numbers
+    PROJECTILE_POOL_SIZE: 15,            // Initial pool size for projectiles
+    MUZZLE_FLASH_POOL_SIZE: 10,          // Initial pool size for muzzle flashes
+    DEATH_ANIMATION_POOL_SIZE: 10,       // Initial pool size for death animations
 };

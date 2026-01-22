@@ -14,6 +14,8 @@ class Game {
 
         this.selectedEntities = [];
         this.camera = { x: 0, y: 0 };
+        this.cameraTarget = null; // For smooth camera following
+        this.cameraPresets = new Map(); // F1-F4 for saved camera positions
 
         this.placingBuilding = null;
         this.activePower = null;
@@ -22,6 +24,9 @@ class Game {
         // Formation management
         this.activeFormations = new Map(); // Map of formation ID to Formation object
         this.nextFormationId = 1;
+
+        // Control groups (1-9 keys)
+        this.controlGroups = new Map(); // Map of group number (1-9) to array of entities
 
         this.gameTime = 0;
         this.lastFrameTime = 0;
@@ -57,6 +62,9 @@ class Game {
         
         // Save/Load system
         this.saveLoadManager = new SaveLoadManager(this);
+        
+        // Visual effects system
+        this.effects = new EffectsManager(this);
     }
 
     init(mapSize, mapType, aiCount, aiDifficulty, startingCredits = 5000, startingInfantry = 3, customMapName = null) {
@@ -271,20 +279,42 @@ class Game {
         }
         this.profiler.endProfile('ai');
 
-        // Update fog of war
+        // Update fog of war (optimized: only update for moved entities)
         const allEntities = [...this.units, ...this.buildings];
         for (const player of this.players) {
             if (!player || !this.map) continue;
-            // Airplanes are now regular units, so they reveal fog automatically
+            // Pass null for changedEntities to let map detect moved entities automatically
             safeCall(this.map.updateFogOfWar, this.map, player, allEntities, null);
         }
 
         // Update formations
         this.updateFormations(deltaTime);
 
+        // Update effects
+        if (this.effects) {
+            safeCall(this.effects.update, this.effects, deltaTime);
+        }
+
         // Update UI
         if (this.ui) {
             safeCall(this.ui.update, this.ui);
+        }
+
+        // Smooth camera following for selected units
+        if (this.cameraTarget) {
+            const targetX = this.cameraTarget.x - this.canvas.width / 2;
+            const targetY = this.cameraTarget.y - this.canvas.height / 2;
+            
+            // Smooth interpolation using configurable speed
+            const followSpeed = CAMERA_CONFIG.SMOOTH_FOLLOW_SPEED;
+            this.camera.x = lerp(this.camera.x, targetX, followSpeed);
+            this.camera.y = lerp(this.camera.y, targetY, followSpeed);
+            
+            // Stop following if close enough
+            const dist = distance(this.camera.x, this.camera.y, targetX, targetY);
+            if (dist < 5) {
+                this.cameraTarget = null;
+            }
         }
 
         // Constrain camera
@@ -300,6 +330,11 @@ class Game {
     }
 
     startBuildingPlacement(buildingType) {
+        if (!this.humanPlayer) {
+            // Game not fully initialized yet - silently return
+            return;
+        }
+
         if (this.placingBuilding) {
             this.cancelBuildingPlacement();
         }
@@ -354,7 +389,24 @@ class Game {
             return;
         }
 
-        if (!canPlaceBuilding(this.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.humanPlayer, this)) {
+        // Check for PORT building - can be placed on water or adjacent to water
+        if (this.placingBuilding === 'PORT') {
+            // Allow PORT on water tiles or adjacent to water
+            const canPlaceOnWater = this.map.isWater(mouseTile.x, mouseTile.y);
+            const hasAdjacentWater = this.map.hasAdjacentWater(mouseTile.x, mouseTile.y, stats.width, stats.height);
+            if (!canPlaceOnWater && !hasAdjacentWater) {
+                showNotification('Port must be placed on water or adjacent to water');
+                return;
+            }
+        } else {
+            // Other buildings cannot be placed on water
+            if (this.map.isWater(mouseTile.x, mouseTile.y)) {
+                showNotification('Cannot place building on water');
+                return;
+            }
+        }
+        
+        if (!canPlaceBuilding(this.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.humanPlayer, this, this.placingBuilding === 'PORT')) {
             showNotification('Cannot place building here or too far from base');
             return;
         }
@@ -613,7 +665,7 @@ class Game {
 
                 const dist = distance(worldX, worldY, unit.x, unit.y);
                 if (dist <= radius * TILE_SIZE) {
-                    const destroyed = unit.takeDamage(config.damage);
+                    const destroyed = unit.takeDamage(config.damage, this);
                     if (destroyed) {
                         const tile = worldToTile(unit.x, unit.y);
                         this.map.clearUnit(tile.x, tile.y);
@@ -626,7 +678,7 @@ class Game {
 
                 const dist = distance(worldX, worldY, building.x, building.y);
                 if (dist <= radius * TILE_SIZE) {
-                    const destroyed = building.takeDamage(config.damage);
+                    const destroyed = building.takeDamage(config.damage, this);
                     if (destroyed) {
                         this.map.clearBuilding(building.tileX, building.tileY, building.stats.width, building.stats.height);
                     }
