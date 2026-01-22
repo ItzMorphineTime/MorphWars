@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Morph Wars - RTS</title>
+    <title>Command & Conquer - RTS</title>
     <style>
         * {
             margin: 0;
@@ -28,7 +28,7 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
+            width: calc(100% - 280px);
             height: 100%;
             background: #1a1a1a;
             cursor: crosshair;
@@ -190,6 +190,32 @@
             padding: 4px 8px;
             font-size: 10px;
             position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2px;
+        }
+
+        .queue-item span {
+            flex: 1;
+        }
+
+        .queue-cancel {
+            background: #f00;
+            border: 1px solid #a00;
+            color: #fff;
+            width: 18px;
+            height: 18px;
+            font-size: 14px;
+            line-height: 14px;
+            cursor: pointer;
+            padding: 0;
+            margin-left: 5px;
+            flex-shrink: 0;
+        }
+
+        .queue-cancel:hover {
+            background: #ff4444;
         }
 
         .queue-progress {
@@ -337,7 +363,7 @@
 </head>
 <body>
     <div id="gameMenu">
-        <div class="menu-title">Morph Wars!</div>
+        <div class="menu-title">COMMAND & CONQUER</div>
         <div class="menu-option">
             <label>AI Opponents:</label>
             <select id="aiCount">
@@ -391,6 +417,7 @@
             </select>
         </div>
         <button class="menu-button" id="startGame">START GAME</button>
+        <button class="menu-button" id="loadGameMenuBtn">LOAD GAME</button>
     </div>
 
     <div id="gameContainer" class="hidden">
@@ -421,6 +448,10 @@
                         AIR<br>STRIKE
                         <div class="power-cooldown"></div>
                     </button>
+                    <button class="power-button" id="powerAirdrop" data-power="airdrop">
+                        AIR<br>DROP
+                        <div class="power-cooldown"></div>
+                    </button>
                     <button class="power-button" id="powerSuperweapon" data-power="superweapon" disabled>
                         ION<br>CANNON
                         <div class="power-cooldown"></div>
@@ -446,6 +477,12 @@
                     <!-- Queue items will be dynamically added here -->
                 </div>
             </div>
+
+            <div class="sidebar-section">
+                <button class="build-button" id="settingsBtn" style="grid-column: 1 / -1; margin-top: 5px; background: #333; border-color: #0f0;">
+                    ⚙️ SETTINGS
+                </button>
+            </div>
         </div>
     </div>
 
@@ -453,6 +490,7 @@
 
     <!-- Core Game Scripts -->
     <script src="js/constants.js"></script>
+    <script src="js/performance.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/perlin.js"></script>
     <script src="js/map.js"></script>
@@ -464,6 +502,7 @@
     <script src="js/ui.js"></script>
     <script src="js/input.js"></script>
     <script src="js/renderer.js"></script>
+    <script src="js/saveload.js"></script>
     <script src="js/game.js"></script>
     <script src="js/main.js"></script>
 </body>

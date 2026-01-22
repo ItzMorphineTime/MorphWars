@@ -66,6 +66,8 @@ class InputHandler {
                 this.isDragging = true;
                 this.dragStartX = this.mouseWorldX;
                 this.dragStartY = this.mouseWorldY;
+                // Show crosshair cursor when selecting
+                this.canvas.style.cursor = 'crosshair';
             }
         } else if (e.button === 2) {
             // Right click
@@ -85,33 +87,72 @@ class InputHandler {
         if (e.button === 0 && this.isDragging) {
             this.isDragging = false;
             this.handleSelection();
+            // Update cursor after selection
+            this.updateCursor();
         }
     }
 
     onMouseMove(e) {
         this.updateMousePosition(e);
 
-        // Pan camera with middle mouse
+        // Pan camera with middle mouse (works anywhere, even over sidebar)
         if (e.buttons === 4) {
             this.game.camera.x -= e.movementX;
             this.game.camera.y -= e.movementY;
+            // Clamp camera to map bounds
+            this.clampCamera();
+            return;
         }
 
-        // Edge scrolling
-        const edgeSize = 20;
-        const scrollSpeed = 10;
-
-        if (this.mouseX < edgeSize) {
-            this.game.camera.x -= scrollSpeed;
-        } else if (this.mouseX > this.canvas.width - edgeSize) {
-            this.game.camera.x += scrollSpeed;
+        // Keep crosshair when dragging to select
+        if (this.isDragging && e.buttons === 1) {
+            this.canvas.style.cursor = 'crosshair';
+            return;
         }
 
-        if (this.mouseY < edgeSize) {
-            this.game.camera.y -= scrollSpeed;
-        } else if (this.mouseY > this.canvas.height - edgeSize) {
-            this.game.camera.y += scrollSpeed;
+        // Update cursor based on game state
+        this.updateCursor();
+    }
+
+    updateCursor() {
+        // Active power - always crosshair
+        if (this.game.activePower) {
+            this.canvas.style.cursor = 'crosshair';
+            return;
         }
+
+        // Units selected - check what's under mouse
+        if (this.game.selectedEntities.length > 0) {
+            const target = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
+            const hasCombatUnits = this.game.selectedEntities.some(e => 
+                e instanceof Unit && !e.isHarvester && e.stats.damage
+            );
+
+            if (target && target.owner !== this.game.humanPlayer && target.isAlive && target.isAlive() && hasCombatUnits) {
+                // Enemy target - show attack cursor (crosshair)
+                this.canvas.style.cursor = 'crosshair';
+            } else if (hasCombatUnits) {
+                // No enemy target - show move cursor (pointer)
+                this.canvas.style.cursor = 'pointer';
+            } else {
+                // No combat units - default cursor
+                this.canvas.style.cursor = 'default';
+            }
+        } else {
+            // No selection - default cursor
+            this.canvas.style.cursor = 'default';
+        }
+    }
+
+    clampCamera() {
+        // Clamp camera to map bounds - check if map exists
+        if (!this.game.map) return;
+        
+        const maxX = (this.game.map.width * TILE_SIZE) - this.canvas.width;
+        const maxY = (this.game.map.height * TILE_SIZE) - this.canvas.height;
+        
+        this.game.camera.x = Math.max(0, Math.min(this.game.camera.x, maxX));
+        this.game.camera.y = Math.max(0, Math.min(this.game.camera.y, maxY));
     }
 
     onWheel(e) {
@@ -141,9 +182,55 @@ class InputHandler {
             }
         }
 
+        // Performance profiler toggle (F3)
+        if (e.key === 'F3') {
+            if (this.game.profiler) {
+                this.game.profiler.toggle();
+                showNotification(this.game.profiler.enabled ? 'Performance profiler enabled' : 'Performance profiler disabled');
+            }
+        }
+
         if (e.key === 'a' || e.key === 'A') {
             // Attack move toggle
             this.game.attackMoveMode = true;
+        }
+
+        // Formation hotkeys
+        if (e.key === '1') {
+            // Line formation
+            this.createFormationForSelected(FORMATION_CONFIG.TYPES.LINE);
+        } else if (e.key === '2') {
+            // Box formation
+            this.createFormationForSelected(FORMATION_CONFIG.TYPES.BOX);
+        } else if (e.key === '3') {
+            // Wedge formation
+            this.createFormationForSelected(FORMATION_CONFIG.TYPES.WEDGE);
+        } else if (e.key === '4') {
+            // Column formation
+            this.createFormationForSelected(FORMATION_CONFIG.TYPES.COLUMN);
+        }
+    }
+
+    createFormationForSelected(formationType) {
+        const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit && !e.isHarvester);
+        if (selectedUnits.length < 2) {
+            showNotification('Select at least 2 units for formation');
+            return;
+        }
+
+        // Calculate center of selected units
+        let centerX = 0, centerY = 0;
+        for (const unit of selectedUnits) {
+            centerX += unit.x;
+            centerY += unit.y;
+        }
+        centerX /= selectedUnits.length;
+        centerY /= selectedUnits.length;
+
+        const formation = this.game.createFormationForSelected(formationType, centerX, centerY);
+        if (formation) {
+            const typeName = formationType.charAt(0).toUpperCase() + formationType.slice(1);
+            showNotification(`${typeName} formation created`);
         }
     }
 
@@ -216,12 +303,146 @@ class InputHandler {
         // Find target at mouse position
         const target = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
 
+        // PRIORITY: If clicking on enemy unit/building, focus fire on it
+        if (target && target.owner !== this.game.humanPlayer && target.isAlive()) {
+            const selectedUnits = this.game.selectedEntities.filter(e => 
+                e instanceof Unit && !e.isHarvester && e.stats.damage
+            );
+
+            if (selectedUnits.length > 0) {
+                // All selected combat units attack the target
+                for (const unit of selectedUnits) {
+                    // Remove from formation if in one
+                    if (unit.formationId) {
+                        this.game.removeUnitFromFormation(unit);
+                    }
+                    // Set target for focus fire
+                    unit.attackTarget(target);
+                }
+                showNotification(`Focus fire on ${target.stats?.name || target.type || 'target'}!`);
+                return;
+            }
+        }
+
         // Check if clicking on resource node
         const clickTile = worldToTile(this.mouseWorldX, this.mouseWorldY);
         const resourceNode = this.game.map.getResourceNode(clickTile.x, clickTile.y);
 
+        // Check if we have a formation - move formation as a group
+        const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit && !e.isHarvester);
+        if (selectedUnits.length >= 2) {
+            // Check if units are in a formation
+            const formationIds = new Set();
+            for (const unit of selectedUnits) {
+                if (unit.formationId) {
+                    formationIds.add(unit.formationId);
+                }
+            }
+
+            // If all selected units are in the same formation, move formation
+            if (formationIds.size === 1) {
+                const formationId = Array.from(formationIds)[0];
+                const formation = this.game.activeFormations.get(formationId);
+                if (formation) {
+                    // Calculate facing angle
+                    const facing = Math.atan2(
+                        this.mouseWorldY - formation.centerY,
+                        this.mouseWorldX - formation.centerX
+                    );
+                    formation.updateCenter(this.mouseWorldX, this.mouseWorldY);
+                    formation.updateFacing(facing);
+
+                    // Move all units to their formation positions with slight randomization to avoid collisions
+                    // Note: Formation movement doesn't remove units from formation
+                    for (let i = 0; i < formation.units.length; i++) {
+                        const unit = formation.units[i];
+                        const pos = formation.getPositionForUnit(i);
+                        
+                        // Add small random offset to spread out arrival times and reduce collisions
+                        const offsetX = (Math.random() - 0.5) * TILE_SIZE * 0.5;
+                        const offsetY = (Math.random() - 0.5) * TILE_SIZE * 0.5;
+                        const targetX = pos.x + offsetX;
+                        const targetY = pos.y + offsetY;
+                        
+                        if (this.game.attackMoveMode) {
+                            unit.attackMove(targetX, targetY, this.game);
+                        } else {
+                            unit.moveTo(targetX, targetY, this.game);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        
+        // For non-formation groups, spread out destinations to reduce collisions
+        if (selectedUnits.length > 1 && selectedUnits.length <= 20) {
+            // Spread destinations in a small area around the click point
+            const spreadRadius = Math.min(selectedUnits.length * 0.5, 5) * TILE_SIZE;
+            const angleStep = (Math.PI * 2) / selectedUnits.length;
+            
+            for (let i = 0; i < selectedUnits.length; i++) {
+                const unit = selectedUnits[i];
+                const angle = i * angleStep;
+                const offsetX = Math.cos(angle) * spreadRadius * Math.random();
+                const offsetY = Math.sin(angle) * spreadRadius * Math.random();
+                const targetX = this.mouseWorldX + offsetX;
+                const targetY = this.mouseWorldY + offsetY;
+                
+                // Remove from formation if unit gets new movement command
+                if (unit.formationId) {
+                    this.game.removeUnitFromFormation(unit);
+                }
+
+                if (target && target.owner !== this.game.humanPlayer) {
+                    unit.attackTarget(target);
+                } else {
+                    if (this.game.attackMoveMode) {
+                        unit.attackMove(targetX, targetY, this.game);
+                    } else {
+                        unit.moveTo(targetX, targetY, this.game);
+                    }
+                }
+            }
+            
+            // Set rally point for buildings
+            for (const entity of this.game.selectedEntities) {
+                if (entity instanceof Building) {
+                    entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
+                }
+            }
+            return;
+        }
+
+        // Handle individual units (single unit or large groups)
         for (const entity of this.game.selectedEntities) {
             if (!(entity instanceof Unit)) continue;
+            
+            // Airplanes can only attack, not move (or return to airfield)
+            if (entity.isAirplane) {
+                // Check if clicking on own airfield - return home
+                if (target instanceof Building && target.type === 'AIRFIELD' && 
+                    target.owner === this.game.humanPlayer && target === entity.homeAirfield) {
+                    entity.flyByTarget = null;
+                    entity.flyByState = 'returning';
+                    entity.landed = false; // Take off if landed
+                    showNotification('Airplane returning to base');
+                    continue;
+                }
+                // Otherwise, can only attack enemies
+                if (target && target.owner !== this.game.humanPlayer && target.isAlive()) {
+                    entity.attackTarget(target);
+                } else {
+                    showNotification('Airplanes can only attack targets or return to airfield');
+                }
+                continue;
+            }
+
+            // CRITICAL: Remove from formation BEFORE giving new command
+            // This prevents formation update from overriding the new command
+            if (entity.formationId) {
+                this.game.removeUnitFromFormation(entity);
+            }
 
             // Harvester-specific commands
             if (entity.isHarvester) {
@@ -255,10 +476,12 @@ class InputHandler {
             }
         }
 
-        // Set rally point for buildings
-        for (const entity of this.game.selectedEntities) {
-            if (entity instanceof Building) {
-                entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
+        // Set rally point for buildings (if not already set above)
+        if (selectedUnits.length <= 1 || selectedUnits.length > 20) {
+            for (const entity of this.game.selectedEntities) {
+                if (entity instanceof Building) {
+                    entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
+                }
             }
         }
     }
@@ -300,6 +523,8 @@ class InputHandler {
 
     onMinimapClick(e) {
         const minimap = document.getElementById('minimap');
+        if (!minimap || !this.game.map) return; // Safety check
+        
         const rect = minimap.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -314,5 +539,6 @@ class InputHandler {
         // Center camera on clicked position
         this.game.camera.x = worldX - this.canvas.width / 2;
         this.game.camera.y = worldY - this.canvas.height / 2;
+        this.clampCamera();
     }
 }

@@ -208,6 +208,24 @@ const UNIT_TYPES = {
         tier: 3,
         size: 2,
     },
+    MAMMOTH_TANK: {
+        name: 'Mammoth Tank',
+        cost: 5000,
+        hp: 2000,
+        speed: 0.8,
+        sight: 8,
+        buildTime: 30,
+        damage: 150,
+        attackSpeed: 2.0,
+        range: 7,
+        damageType: 'explosive',
+        splashRadius: 2,
+        armor: 'heavy',
+        category: 'vehicle',
+        tier: 3,
+        size: 3,
+        requiresTier: 3,
+    },
     ARTILLERY: {
         name: 'Artillery',
         cost: 1200,
@@ -243,6 +261,25 @@ const UNIT_TYPES = {
         size: 1.5,
         maxAmmo: 10,
         ignoresCollision: true,
+    },
+    AIRPLANE: {
+        name: 'Airplane',
+        cost: 2000,
+        hp: 200,
+        speed: 5.0,
+        sight: 10,
+        buildTime: 18,
+        damage: 150,
+        attackSpeed: 0.5, // Fast attack speed for fly-by
+        range: 6,
+        damageType: 'explosive',
+        armor: 'light',
+        category: 'air',
+        tier: 2,
+        size: 1.5,
+        maxAmmo: 3,
+        ignoresCollision: true,
+        isAirplane: true, // Special flag for airplane behavior
     },
 };
 
@@ -455,6 +492,14 @@ const SPECIAL_POWERS = {
         radius: 3,
         requiresTier: 2,
     },
+    airdrop: {
+        name: 'Air Drop',
+        cost: 1500,
+        cooldown: 180000, // 180 seconds
+        units: 5,
+        requiresTier: 2,
+        requiresBuilding: 'AIRFIELD',
+    },
     superweapon: {
         name: 'Ion Cannon',
         cost: 0,
@@ -541,6 +586,20 @@ const AI_BEHAVIOR = {
 const PATHFINDING = {
     MAX_ITERATIONS: 10000,            // Maximum pathfinding iterations before giving up
     CARDINAL_ONLY: true,            // Only use cardinal directions (no diagonals) for performance
+    HIERARCHICAL_THRESHOLD: 20,      // Use hierarchical pathfinding for paths longer than this (tiles)
+    WAYPOINT_DISTANCE: 15,           // Distance between waypoints in hierarchical pathfinding
+};
+
+// Formation constants
+const FORMATION_CONFIG = {
+    SPACING: 2.5,                    // Spacing between units in formations (tiles)
+    MAINTAIN_DISTANCE: 3.0,          // Maximum distance from formation position before repositioning
+    TYPES: {
+        LINE: 'line',                // Horizontal line formation
+        BOX: 'box',                  // Square box formation
+        WEDGE: 'wedge',              // V-shaped formation
+        COLUMN: 'column',            // Vertical column formation
+    },
 };
 
 // Map generation constants

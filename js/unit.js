@@ -43,9 +43,27 @@ class Unit extends Entity {
         this.maxAmmo = stats.maxAmmo || 0;
         this.needsReload = false;
 
+        // Airplane specific
+        this.isAirplane = stats.isAirplane || false;
+        this.homeAirfield = null; // Assigned airfield
+        this.flyByTarget = null; // Target for fly-by attacks
+        this.flyByState = 'idle'; // idle, approaching, attacking, looping, returning
+        this.lastAttackTime = 0;
+        this.flyByPasses = 0; // Number of passes made
+        this.angle = 0; // Current facing angle (for rendering and steering)
+        this.velocity = { x: 0, y: 0 }; // Current velocity vector
+        this.maxTurnRate = 0.05; // Radians per frame (smooth turning)
+        this.acceleration = 0.3; // Acceleration rate
+        this.landed = false; // Whether airplane is landed on airfield
+
         // Builder specific
         this.isBuilder = stats.isBuilder || false;
         this.buildTarget = null;
+
+        // Formation specific
+        this.formationId = null;
+        this.formationIndex = null;
+        this.userCommandTime = 0; // Track when user gave a command (to prevent formation override)
     }
 
     moveTo(x, y, game) {
@@ -59,14 +77,19 @@ class Unit extends Entity {
         const ownerType = this.owner.isAI ? 'AI' : 'Player';
         const shouldLog = ownerType === 'AI' ? DEBUG_LOGGING.AI_MOVEMENT : DEBUG_LOGGING.PLAYER_MOVEMENT;
 
-        // Track original destination for ground units - only set if NEW move command
-        if (!this.originalDestination || !this.path) {
-            this.originalDestination = {x: targetTile.x, y: targetTile.y};
-            this.destinationChangeCount = 0;
-            this.collisionCount = 0;
-            if (shouldLog) {
-                console.log(`[${ownerType} ${this.type}] New destination set: (${targetTile.x}, ${targetTile.y})`);
-            }
+        // Track original destination for ground units - always set on new move command
+        // This helps prevent formation updates from overriding user commands
+        this.originalDestination = {x: targetTile.x, y: targetTile.y};
+        this.destinationChangeCount = 0;
+        this.collisionCount = 0;
+        
+        // Mark this as a user command (if not AI) to prevent formation override
+        if (!this.owner.isAI) {
+            this.userCommandTime = Date.now();
+        }
+        
+        if (shouldLog) {
+            console.log(`[${ownerType} ${this.type}] New destination set: (${targetTile.x}, ${targetTile.y})`);
         }
 
         this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size);
@@ -83,11 +106,35 @@ class Unit extends Entity {
     attackMove(x, y, game) {
         this.moveTo(x, y, game);
         this.stance = 'aggressive';
+        // Mark as user command
+        if (!this.owner.isAI) {
+            this.userCommandTime = Date.now();
+        }
     }
 
     attackTarget(target) {
-        this.targetEnemy = target;
-        this.path = null;
+        // Focus fire - set this unit's target to the specified target
+        if (this.isAirplane) {
+            // Check if airplane has ammo
+            if (this.ammo <= 0) {
+                showNotification('Airplane out of ammo - returning to base');
+                this.flyByState = 'returning';
+                this.flyByTarget = null;
+                return;
+            }
+            // Airplanes can only attack (fly-by), not move
+            this.flyByTarget = target; // Store attack target for fly-by
+            this.flyByState = 'approaching';
+            this.flyByPasses = 0;
+            // Set target location for fly-by
+            this.targetX = target.x;
+            this.targetY = target.y;
+            // Take off from airfield
+            this.landed = false;
+        } else {
+            this.targetEnemy = target;
+            this.path = null; // Clear movement path to engage immediately
+        }
     }
 
     stop() {
@@ -103,6 +150,12 @@ class Unit extends Entity {
         // Update attack cooldown
         if (this.attackCooldown > 0) {
             this.attackCooldown -= deltaTime;
+        }
+
+        // Airplane-specific behavior
+        if (this.isAirplane) {
+            this.updateAirplane(deltaTime, game);
+            return;
         }
 
         // Stuck detection for harvesters
@@ -253,23 +306,40 @@ class Unit extends Entity {
                 // Allow movement if: tile exists AND (not blocked OR building allows units on top) AND no other unit
                 const buildingAllowsUnits = targetTile && targetTile.building && targetTile.building.stats.allowsUnitsOnTop;
                 const tileIsPassable = targetTile && (!targetTile.blocked || buildingAllowsUnits);
-                const noOtherUnit = !targetTile || !targetTile.unit || targetTile.unit === this;
+                
+                // Special handling for formation units - allow passing through units in same formation
+                let noOtherUnit = true;
+                if (targetTile && targetTile.unit && targetTile.unit !== this) {
+                    // Check if the other unit is in the same formation
+                    if (this.formationId && targetTile.unit.formationId === this.formationId) {
+                        // Same formation - allow passing through (formation units can overlap slightly)
+                        noOtherUnit = true;
+                    } else {
+                        // Different unit or no formation - normal collision
+                        noOtherUnit = false;
+                    }
+                }
 
                 if (tileIsPassable && noOtherUnit) {
                     canMove = true;
                 } else {
                     // Collision detected!
+                    // For formation units, be more lenient with collisions
+                    const isFormationUnit = this.formationId !== null;
+                    const collisionThreshold = isFormationUnit ? COLLISION_CONFIG.MAX_COLLISIONS * 2 : COLLISION_CONFIG.MAX_COLLISIONS;
+                    const cooldownTime = isFormationUnit ? COLLISION_CONFIG.COOLDOWN_MS * 0.5 : COLLISION_CONFIG.COOLDOWN_MS;
+                    
                     this.collisionCount++;
                     const ownerType = this.owner.isAI ? 'AI' : 'Player';
                     const shouldLog = ownerType === 'AI' ? DEBUG_LOGGING.AI_MOVEMENT : DEBUG_LOGGING.PLAYER_MOVEMENT;
 
-                    if (shouldLog) {
+                    if (shouldLog && !isFormationUnit) {
                         console.log(`[${ownerType} ${this.type}] Collision #${this.collisionCount} at (${newTile.x}, ${newTile.y})`);
                     }
 
-                    if (this.collisionCount >= COLLISION_CONFIG.MAX_COLLISIONS) {
+                    if (this.collisionCount >= collisionThreshold) {
                         if (shouldLog) {
-                            console.log(`[${ownerType} ${this.type}] Stopped after ${COLLISION_CONFIG.MAX_COLLISIONS} collisions`);
+                            console.log(`[${ownerType} ${this.type}] Stopped after ${collisionThreshold} collisions`);
                         }
                         this.path = null;
                         this.collisionCount = 0;
@@ -277,10 +347,10 @@ class Unit extends Entity {
                         return;
                     }
 
-                    // Set collision cooldown
-                    this.collisionCooldown = COLLISION_CONFIG.COOLDOWN_MS;
-                    if (shouldLog) {
-                        console.log(`[${ownerType} ${this.type}] Cooldown activated for ${COLLISION_CONFIG.COOLDOWN_MS}ms`);
+                    // Set collision cooldown (shorter for formation units)
+                    this.collisionCooldown = cooldownTime;
+                    if (shouldLog && !isFormationUnit) {
+                        console.log(`[${ownerType} ${this.type}] Cooldown activated for ${cooldownTime}ms`);
                     }
 
                     // Check if final destination is blocked
@@ -423,6 +493,20 @@ class Unit extends Entity {
     performAttack(target, game) {
         if (!target || !target.isAlive()) return;
 
+        // Check if target is an airplane (air drop)
+        if (target.hp !== undefined && target.startTime !== undefined && target.flightTime !== undefined) {
+            // It's an airplane - apply damage directly
+            const damage = this.stats.damage || 0;
+            target.hp = (target.hp || 100) - damage;
+            
+            if (target.hp <= 0) {
+                target.active = false;
+                this.targetEnemy = null;
+                showNotification('Air drop airplane shot down!');
+            }
+            return;
+        }
+
         // Check ammo for helicopters
         if (this.maxAmmo > 0) {
             if (this.ammo <= 0) {
@@ -465,8 +549,33 @@ class Unit extends Entity {
             this.gainExperience();
             this.targetEnemy = null;
 
+            // Track stats
+            if (game.stats) {
+                if (target instanceof Unit) {
+                    game.stats.unitsKilled++;
+                    if (target.owner && target.owner.isAI) {
+                        // Enemy unit killed
+                        if (this.owner === game.humanPlayer) {
+                            game.stats.enemiesKilled++;
+                            game.stats.enemiesKilledByType[target.type] = (game.stats.enemiesKilledByType[target.type] || 0) + 1;
+                        }
+                    } else if (target.owner === game.humanPlayer && this.owner && this.owner.isAI) {
+                        // Player unit lost
+                        game.stats.playerUnitsLost++;
+                        game.stats.playerUnitsLostByType[target.type] = (game.stats.playerUnitsLostByType[target.type] || 0) + 1;
+                    }
+                } else if (target instanceof Building) {
+                    if (this.owner === game.humanPlayer) {
+                        game.stats.buildingsDestroyed++;
+                    }
+                }
+            }
+
             // Remove from game
             if (target instanceof Unit) {
+                // Remove from formation if in one
+                game.removeUnitFromFormation(target);
+                
                 const tile = worldToTile(target.x, target.y);
                 game.map.clearUnit(tile.x, tile.y);
                 const index = game.units.indexOf(target);
@@ -493,9 +602,27 @@ class Unit extends Entity {
         let nearestDist = Infinity;
         const searchRadius = (this.stats.sight || SIGHT_RANGE) * TILE_SIZE;
 
-        // Check units
+        // Check if unit can attack air (only ROCKET_SOLDIER can attack airplanes)
+        const canAttackAir = this.type === 'ROCKET_SOLDIER' && this.stats.damageType === 'rocket';
+
+        // Check airplane units first if unit can attack air
+        if (canAttackAir) {
+            for (const unit of game.units) {
+                if (!unit.isAirplane || unit.owner === this.owner || !unit.isAlive()) continue;
+                const dist = distance(this.x, this.y, unit.x, unit.y);
+                const range = (this.stats.range || 1) * TILE_SIZE;
+                if (dist <= range && dist < nearestDist) {
+                    nearest = unit;
+                    nearestDist = dist;
+                }
+            }
+        }
+
+        // Check units (exclude airplanes unless this unit can attack air)
         for (const unit of game.units) {
             if (unit.owner === this.owner || !unit.isAlive()) continue;
+            // Skip airplanes unless this unit can attack them
+            if (unit.isAirplane && !canAttackAir) continue;
 
             const dist = distance(this.x, this.y, unit.x, unit.y);
             if (dist < searchRadius && dist < nearestDist) {
@@ -569,7 +696,13 @@ class Unit extends Entity {
                     if (dist < TILE_SIZE * 3) {
                         // Apply resource value multiplier based on resource type
                         const valueMultiplier = this.targetResource ? this.targetResource.valueMultiplier : 1;
-                        this.owner.credits += this.cargo * valueMultiplier;
+                        const earned = this.cargo * valueMultiplier;
+                        this.owner.credits += earned;
+                        
+                        // Track money earned for human player
+                        if (this.owner === game.humanPlayer && game.stats) {
+                            game.stats.moneyEarned += earned;
+                        }
                         this.cargo = 0;
                         this.harvestState = 'idle';
                         this.targetRefinery = null;
@@ -766,6 +899,28 @@ class Unit extends Entity {
             const actualDamage = Math.floor(baseDamage * damageMultiplier);
 
             const destroyed = target.takeDamage(actualDamage);
+            
+            // Track stats
+            if (destroyed && game.stats) {
+                if (target instanceof Unit) {
+                    game.stats.unitsKilled++;
+                    if (target.owner && target.owner.isAI) {
+                        // Enemy unit killed
+                        if (this.owner === game.humanPlayer) {
+                            game.stats.enemiesKilled++;
+                            game.stats.enemiesKilledByType[target.type] = (game.stats.enemiesKilledByType[target.type] || 0) + 1;
+                        }
+                    } else if (target.owner === game.humanPlayer && this.owner && this.owner.isAI) {
+                        // Player unit lost
+                        game.stats.playerUnitsLost++;
+                        game.stats.playerUnitsLostByType[target.type] = (game.stats.playerUnitsLostByType[target.type] || 0) + 1;
+                    }
+                } else if (target instanceof Building) {
+                    if (this.owner === game.humanPlayer) {
+                        game.stats.buildingsDestroyed++;
+                    }
+                }
+            }
 
             if (destroyed) {
                 if (target === primaryTarget) {
@@ -775,6 +930,9 @@ class Unit extends Entity {
 
                 // Remove destroyed entities
                 if (target instanceof Unit) {
+                    // Remove from formation if in one
+                    game.removeUnitFromFormation(target);
+                    
                     const tile = worldToTile(target.x, target.y);
                     game.map.clearUnit(tile.x, tile.y);
                     const index = game.units.indexOf(target);
@@ -794,5 +952,353 @@ class Unit extends Entity {
                 }
             }
         }
+    }
+
+    updateAirplane(deltaTime, game) {
+        // If landed, don't update movement
+        if (this.landed) {
+            // Reload and heal at airfield
+            if (this.ammo < this.maxAmmo) {
+                this.ammo = this.maxAmmo;
+            }
+            if (this.hp < this.maxHp) {
+                this.hp = Math.min(this.maxHp, this.hp + deltaTime * 0.1); // Slow heal
+            }
+            // Ensure position is on airfield
+            if (this.homeAirfield && this.homeAirfield.isAlive()) {
+                this.x = this.homeAirfield.x;
+                this.y = this.homeAirfield.y;
+                this.velocity.x = 0;
+                this.velocity.y = 0;
+            }
+            return;
+        }
+        
+        // Smooth airplane movement with steering (no grid pathfinding)
+        this.updateAirplaneMovement(deltaTime, game);
+    }
+
+    updateAirplaneMovement(deltaTime, game) {
+        const speed = this.stats.speed * (deltaTime / 16);
+        let targetAngle = this.angle;
+        let targetX = this.x;
+        let targetY = this.y;
+
+        // Determine target based on state
+        switch (this.flyByState) {
+            case 'idle':
+                // Land on airfield
+                if (this.homeAirfield && this.homeAirfield.isAlive()) {
+                    const dist = distance(this.x, this.y, this.homeAirfield.x, this.homeAirfield.y);
+                    if (dist > 30) {
+                        // Move back to airfield
+                        targetX = this.homeAirfield.x;
+                        targetY = this.homeAirfield.y;
+                        targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                    } else {
+                        // Land on airfield
+                        this.landed = true;
+                        this.x = this.homeAirfield.x;
+                        this.y = this.homeAirfield.y;
+                        this.velocity.x = 0;
+                        this.velocity.y = 0;
+                    }
+                }
+                break;
+
+            case 'approaching':
+                // Handle special power airplanes or regular attack targets
+                if (this.specialPowerType) {
+                    // Special power airplane (recon, airstrike, airdrop)
+                    const dist = distance(this.x, this.y, this.specialPowerTarget.x, this.specialPowerTarget.y);
+                    
+                    if (dist < 50) {
+                        // Reached target - execute special power
+                        if (this.specialPowerType === 'recon') {
+                            // Recon complete - remove airplane
+                            showNotification('Recon sweep complete');
+                            this.takeDamage(this.hp); // Destroy to remove
+                        } else if (this.specialPowerType === 'airstrike') {
+                            // Execute airstrike
+                            this.executeAirstrike(game);
+                            this.takeDamage(this.hp); // Destroy after strike
+                        } else if (this.specialPowerType === 'airdrop') {
+                            // Execute airdrop
+                            this.executeAirdrop(game);
+                            this.takeDamage(this.hp); // Destroy after drop
+                        }
+                        break;
+                    }
+                    
+                    // Fly towards special power target
+                    targetX = this.specialPowerTarget.x;
+                    targetY = this.specialPowerTarget.y;
+                    targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                } else if (this.flyByTarget) {
+                    // Regular attack target
+                    if (!this.flyByTarget.isAlive()) {
+                        this.flyByState = 'returning';
+                        this.flyByTarget = null;
+                        break;
+                    }
+
+                    // Check if out of ammo - return to base
+                    if (this.ammo <= 0) {
+                        this.flyByState = 'returning';
+                        this.flyByTarget = null;
+                        break;
+                    }
+
+                    // Move towards target
+                    const dist = distance(this.x, this.y, this.flyByTarget.x, this.flyByTarget.y);
+                    const attackRange = (this.stats.range || 6) * TILE_SIZE;
+
+                    if (dist <= attackRange && this.ammo > 0) {
+                        // In range - perform fly-by attack
+                        this.performFlyByAttack(this.flyByTarget, game);
+                        this.flyByPasses++;
+                        this.lastAttackTime = game.gameTime || Date.now();
+
+                        if (this.ammo > 0) {
+                            // Still have ammo - loop around for another pass
+                            this.flyByState = 'looping';
+                            // Set waypoint behind target for loop
+                            const dx = this.flyByTarget.x - this.x;
+                            const dy = this.flyByTarget.y - this.y;
+                            const norm = Math.sqrt(dx * dx + dy * dy);
+                            const loopDistance = attackRange * 2;
+                            this.targetX = this.flyByTarget.x + (dx / norm) * loopDistance;
+                            this.targetY = this.flyByTarget.y + (dy / norm) * loopDistance;
+                        } else {
+                            // Out of ammo - return to base
+                            this.flyByState = 'returning';
+                        }
+                    } else {
+                        // Still approaching - fly towards target
+                        targetX = this.flyByTarget.x;
+                        targetY = this.flyByTarget.y;
+                        targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                    }
+                } else {
+                    // No target - return to base
+                    this.flyByState = 'returning';
+                }
+                break;
+
+            case 'looping':
+                // Looping around for another pass
+                const loopDist = distance(this.x, this.y, this.targetX, this.targetY);
+                if (loopDist < 50) {
+                    // Reached loop waypoint - approach target again
+                    this.flyByState = 'approaching';
+                } else {
+                    // Continue to loop waypoint
+                    targetX = this.targetX;
+                    targetY = this.targetY;
+                    targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                }
+                break;
+
+            case 'returning':
+                // Returning to airfield
+                if (!this.homeAirfield || !this.homeAirfield.isAlive()) {
+                    // No airfield - just idle
+                    this.flyByState = 'idle';
+                    break;
+                }
+
+                const returnDist = distance(this.x, this.y, this.homeAirfield.x, this.homeAirfield.y);
+                if (returnDist < 30) {
+                    // Reached airfield - land
+                    this.flyByState = 'idle';
+                    this.flyByTarget = null;
+                    this.landed = true;
+                    this.x = this.homeAirfield.x;
+                    this.y = this.homeAirfield.y;
+                    this.velocity.x = 0;
+                    this.velocity.y = 0;
+                } else {
+                    // Move to airfield
+                    targetX = this.homeAirfield.x;
+                    targetY = this.homeAirfield.y;
+                    targetAngle = Math.atan2(targetY - this.y, targetX - this.x);
+                }
+                break;
+        }
+
+        // Smooth steering: gradually turn towards target angle
+        let angleDiff = targetAngle - this.angle;
+        // Normalize angle difference to [-PI, PI]
+        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+        // Turn at max turn rate
+        const maxTurn = this.maxTurnRate * deltaTime;
+        if (Math.abs(angleDiff) > maxTurn) {
+            this.angle += Math.sign(angleDiff) * maxTurn;
+        } else {
+            this.angle = targetAngle;
+        }
+
+        // Normalize angle
+        while (this.angle > Math.PI) this.angle -= 2 * Math.PI;
+        while (this.angle < -Math.PI) this.angle += 2 * Math.PI;
+
+        // Accelerate in direction of travel
+        const desiredVelocity = {
+            x: Math.cos(this.angle) * speed,
+            y: Math.sin(this.angle) * speed
+        };
+
+        // Smooth acceleration
+        this.velocity.x = lerp(this.velocity.x, desiredVelocity.x, this.acceleration);
+        this.velocity.y = lerp(this.velocity.y, desiredVelocity.y, this.acceleration);
+
+        // Update position
+        this.x += this.velocity.x;
+        this.y += this.velocity.y;
+
+        // Update map position for fog of war
+        const oldTile = worldToTile(this.x - this.velocity.x, this.y - this.velocity.y);
+        const newTile = worldToTile(this.x, this.y);
+        if (oldTile.x !== newTile.x || oldTile.y !== newTile.y) {
+            game.map.clearUnit(oldTile.x, oldTile.y);
+            game.map.setUnit(newTile.x, newTile.y, this);
+        }
+    }
+
+    performFlyByAttack(target, game) {
+        if (!target || !target.isAlive() || this.ammo <= 0) return;
+
+        // Use ammo
+        this.ammo--;
+
+        // Apply explosive damage
+        const baseDamage = this.stats.damage || 150;
+        const splashRadius = (this.stats.range || 6) * TILE_SIZE * 0.5; // Smaller splash for fly-by
+
+        // Find all targets in splash radius
+        const targets = [target];
+
+        // Check units
+        for (const unit of game.units) {
+            if (!unit.isAlive()) continue;
+            if (unit === target) continue;
+            if (unit.owner === this.owner) continue;
+
+            const dist = distance(target.x, target.y, unit.x, unit.y);
+            if (dist <= splashRadius) {
+                targets.push(unit);
+            }
+        }
+
+        // Check buildings
+        for (const building of game.buildings) {
+            if (!building.isAlive()) continue;
+            if (building === target) continue;
+            if (building.owner === this.owner) continue;
+
+            const dist = distance(target.x, target.y, building.x, building.y);
+            if (dist <= splashRadius) {
+                targets.push(building);
+            }
+        }
+
+        // Apply damage to all targets
+        for (const t of targets) {
+            const dist = distance(target.x, target.y, t.x, t.y);
+            const damageMultiplier = 1.0 - (dist / splashRadius) * 0.5;
+            const actualDamage = Math.floor(baseDamage * damageMultiplier);
+
+            const destroyed = t.takeDamage(actualDamage);
+
+            // Track stats
+            if (destroyed && game.stats) {
+                if (t instanceof Unit) {
+                    game.stats.unitsKilled++;
+                    if (t.owner && t.owner.isAI) {
+                        if (this.owner === game.humanPlayer) {
+                            game.stats.enemiesKilled++;
+                            game.stats.enemiesKilledByType[t.type] = (game.stats.enemiesKilledByType[t.type] || 0) + 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        showNotification(`Airplane fly-by attack! ${this.ammo} ammo remaining`);
+    }
+
+    executeAirstrike(game) {
+        if (!this.strikeX || !this.strikeY) return;
+
+        showNotification('Airstrike!');
+
+        const radius = this.strikeRadius * TILE_SIZE;
+
+        // Damage units and buildings in radius
+        for (const unit of game.units) {
+            if (unit.owner === this.owner) continue;
+            if (!unit.isAlive()) continue;
+
+            const dist = distance(this.strikeX, this.strikeY, unit.x, unit.y);
+            if (dist <= radius) {
+                const destroyed = unit.takeDamage(this.strikeDamage);
+                if (destroyed) {
+                    const tile = worldToTile(unit.x, unit.y);
+                    game.map.clearUnit(tile.x, tile.y);
+                }
+            }
+        }
+
+        for (const building of game.buildings) {
+            if (building.owner === this.owner) continue;
+            if (!building.isAlive()) continue;
+
+            const dist = distance(this.strikeX, this.strikeY, building.x, building.y);
+            if (dist <= radius) {
+                building.takeDamage(this.strikeDamage);
+            }
+        }
+
+        // Remove destroyed units
+        game.units = game.units.filter(u => u.isAlive());
+    }
+
+    executeAirdrop(game) {
+        if (!this.airdropUnits || !this.airdropInfantryTypes) return;
+
+        // Drop units
+        const dropRadius = 2; // Tiles
+        const centerTile = worldToTile(this.airdropTargetX, this.airdropTargetY);
+        const dropPositions = [];
+
+        // Generate drop positions in a circle
+        for (let i = 0; i < this.airdropUnits; i++) {
+            const angle = (i / this.airdropUnits) * Math.PI * 2;
+            const offsetX = Math.cos(angle) * dropRadius;
+            const offsetY = Math.sin(angle) * dropRadius;
+            const dropTile = { x: centerTile.x + Math.round(offsetX), y: centerTile.y + Math.round(offsetY) };
+            dropPositions.push(dropTile);
+        }
+
+        // Spawn random infantry units
+        for (const dropPos of dropPositions) {
+            const randomType = this.airdropInfantryTypes[Math.floor(Math.random() * this.airdropInfantryTypes.length)];
+            const stats = UNIT_TYPES[randomType];
+            const worldPos = tileToWorld(dropPos.x, dropPos.y);
+            const unit = new Unit(worldPos.x, worldPos.y, randomType, stats, this.owner);
+
+            game.units.push(unit);
+            game.map.setUnit(dropPos.x, dropPos.y, unit);
+
+            // Track stats
+            if (game.stats) {
+                game.stats.unitsBuilt++;
+                game.stats.unitsBuiltByType[randomType] = (game.stats.unitsBuiltByType[randomType] || 0) + 1;
+            }
+        }
+
+        showNotification(`Air drop complete - ${this.airdropUnits} units deployed`);
     }
 }

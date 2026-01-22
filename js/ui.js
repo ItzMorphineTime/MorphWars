@@ -11,6 +11,9 @@ class UIController {
         this.lastCredits = 0;
         this.lastPowerRatio = 1;
         this.currentMenuType = null; // 'deploy', 'buildings', 'production', 'empty'
+        this.lastQueueState = null; // Track queue state to avoid redrawing
+        this.lastSelectionInfo = null; // Track selection info to avoid redrawing
+        this.queueEventDelegate = null; // Event delegation for queue buttons
     }
 
     setupElements() {
@@ -19,12 +22,60 @@ class UIController {
         this.powerTotalEl = document.getElementById('powerTotal');
         this.powerFillEl = document.getElementById('powerFill');
         this.selectionInfoEl = document.getElementById('selectionInfo');
+        
+        // Set up event delegation for pause button (prevents losing listeners on redraw)
+        if (this.selectionInfoEl) {
+            this.selectionInfoEl.addEventListener('click', (e) => {
+                const pauseBtn = e.target.closest('#pauseProductionBtn');
+                if (!pauseBtn) return;
+                
+                e.stopPropagation();
+                const selectedBuilding = this.game.selectedEntities[0];
+                if (!selectedBuilding || !(selectedBuilding instanceof Building) || !selectedBuilding.stats.produces) {
+                    return;
+                }
+                
+                const isPaused = selectedBuilding.toggleProduction();
+                this.updateSelection(); // Force update to refresh button
+                showNotification(isPaused ? 'Production paused' : 'Production resumed');
+            });
+        }
+        
         this.buildMenuEl = document.getElementById('buildMenu');
         this.buildQueueEl = document.getElementById('buildQueue');
+        
+        // Set up event delegation for queue cancel buttons (prevents losing listeners on redraw)
+        if (this.buildQueueEl) {
+            this.buildQueueEl.addEventListener('click', (e) => {
+                const cancelBtn = e.target.closest('.queue-cancel');
+                if (!cancelBtn) return;
+                
+                e.stopPropagation();
+                e.preventDefault();
+                
+                const index = parseInt(cancelBtn.dataset.index);
+                const selectedBuilding = this.game.selectedEntities[0];
+                if (!selectedBuilding || !(selectedBuilding instanceof Building)) {
+                    return;
+                }
+                
+                selectedBuilding.cancelProduction(index);
+                this.updateProductionQueue(selectedBuilding, true); // Force update
+                this.updateBuildMenu(this.game.humanPlayer, this.game.selectedEntities);
+            });
+        }
+        
+        this.saveGameBtn = document.getElementById('saveGameBtn');
+        this.loadGameBtn = document.getElementById('loadGameBtn');
+        this.newGameBtn = document.getElementById('newGameBtn');
+        this.surrenderBtn = document.getElementById('surrenderBtn');
+        this.saveListEl = document.getElementById('saveList');
+        this.settingsBtn = document.getElementById('settingsBtn');
 
         this.powerButtons = {
             recon: document.getElementById('powerRecon'),
             airstrike: document.getElementById('powerAirstrike'),
+            airdrop: document.getElementById('powerAirdrop'),
             superweapon: document.getElementById('powerSuperweapon'),
         };
 
@@ -50,16 +101,81 @@ class UIController {
                 // Place building
                 this.game.startBuildingPlacement(button.dataset.building);
             } else if (button.dataset.unit) {
-                // Train unit
+                // Train unit - add to queue (credits charged when unit finishes)
                 const selected = this.game.selectedEntities[0];
                 if (selected instanceof Building) {
                     const stats = UNIT_TYPES[button.dataset.unit];
-                    if (this.game.humanPlayer.spend(stats.cost)) {
+                    // Only check if can afford, don't charge yet
+                    if (this.game.humanPlayer.canAfford(stats.cost)) {
                         selected.addToQueue(button.dataset.unit, stats);
+                        // Update queue display immediately
+                        this.updateProductionQueue(selected, true);
+                        // Also update selection info if this building is selected
+                        if (this.game.selectedEntities[0] === selected) {
+                            this.updateSelection();
+                        }
                     }
                 }
             }
         });
+
+        // Settings button (new modal approach)
+        if (this.settingsBtn) {
+            this.settingsBtn.addEventListener('click', () => {
+                this.showSettingsModal();
+            });
+        }
+
+        // Legacy Save/Load buttons (if they still exist in HTML)
+        if (this.saveGameBtn) {
+            this.saveGameBtn.addEventListener('click', () => {
+                const saveName = prompt('Enter save name:', `Save ${new Date().toLocaleString()}`);
+                if (saveName) {
+                    this.game.saveLoadManager.saveGame(saveName);
+                    this.updateSaveList();
+                }
+            });
+        }
+
+        if (this.loadGameBtn) {
+            this.loadGameBtn.addEventListener('click', () => {
+                this.showLoadMenu();
+            });
+        }
+
+        if (this.newGameBtn) {
+            this.newGameBtn.addEventListener('click', () => {
+                if (confirm('Start a new game? Current progress will be lost.')) {
+                    if (this.game.newGame) {
+                        this.game.newGame();
+                    } else {
+                        location.reload();
+                    }
+                }
+            });
+        }
+
+        if (this.surrenderBtn) {
+            this.surrenderBtn.addEventListener('click', () => {
+                if (confirm('Surrender? This will end the current game.')) {
+                    if (this.game.surrender) {
+                        this.game.surrender();
+                    } else {
+                        this.game.humanPlayer.defeated = true;
+                        // Destroy all player buildings to trigger defeat
+                        for (const building of this.game.buildings) {
+                            if (building.owner === this.game.humanPlayer) {
+                                building.hp = 0;
+                            }
+                        }
+                        this.game.checkVictoryCondition();
+                    }
+                }
+            });
+        }
+
+        // Update save list periodically
+        setInterval(() => this.updateSaveList(), 5000);
     }
 
     update() {
@@ -70,6 +186,7 @@ class UIController {
         this.updateSelection();
         this.updateBuildMenu();
         this.updatePowerButtons(player);
+        this.updateSaveList();
     }
 
     updateResources(player) {
@@ -93,17 +210,50 @@ class UIController {
         const selected = this.game.selectedEntities;
 
         if (selected.length === 0) {
-            this.selectionInfoEl.innerHTML = '<div class="sidebar-header">Selection</div><div class="unit-info">No units selected</div>';
+            if (this.lastSelectionInfo !== 'empty') {
+                this.selectionInfoEl.innerHTML = '<div class="sidebar-header">Selection</div><div class="unit-info">No units selected</div>';
+                this.lastSelectionInfo = 'empty';
+            }
             return;
         }
+
+        // Create selection state signature
+        const entity = selected.length === 1 ? selected[0] : null;
+        const selectionState = entity ? JSON.stringify({
+            type: entity.type,
+            id: entity.id || entity.x + entity.y, // Use position as ID if no ID
+            hp: Math.floor(entity.hp),
+            maxHp: entity.maxHp,
+            paused: entity instanceof Building ? entity.productionPaused : null,
+            queue: entity instanceof Building ? entity.productionQueue.length : null,
+            current: entity instanceof Building && entity.currentProduction ? entity.currentProduction.type : null,
+        }) : `multiple_${selected.length}`;
+
+        // Only redraw if selection changed
+        if (this.lastSelectionInfo === selectionState) {
+            // Just update HP and ammo display if single entity
+            if (entity && selected.length === 1) {
+                this.updateSelectionHP(entity);
+                // Update ammo if unit has ammo
+                if (entity instanceof Unit && entity.maxAmmo > 0) {
+                    this.updateSelectionAmmo(entity);
+                }
+                // Also update building queue info if it's a building
+                if (entity instanceof Building) {
+                    this.updateSelectionBuildingInfo(entity, false); // Pass false to prevent recursion
+                }
+            }
+            return;
+        }
+
+        this.lastSelectionInfo = selectionState;
 
         let html = '<div class="sidebar-header">Selection</div>';
 
         if (selected.length === 1) {
-            const entity = selected[0];
             html += `<div class="unit-info">`;
             html += `<strong>${entity.stats.name || entity.type}</strong><br>`;
-            html += `HP: ${Math.floor(entity.hp)}/${entity.maxHp}<br>`;
+            html += `<span class="selection-hp">HP: ${Math.floor(entity.hp)}/${entity.maxHp}</span><br>`;
 
             if (entity.veterancy > 0) {
                 html += `Rank: ${'★'.repeat(entity.veterancy)}<br>`;
@@ -114,7 +264,7 @@ class UIController {
                     html += `Cargo: ${Math.floor(entity.cargo)}/${entity.stats.maxCargo}<br>`;
                 }
                 if (entity.maxAmmo > 0) {
-                    html += `Ammo: ${entity.ammo}/${entity.maxAmmo}<br>`;
+                    html += `<span class="selection-ammo">Ammo: ${entity.ammo}/${entity.maxAmmo}</span><br>`;
                     if (entity.needsReload) {
                         html += `<span style="color: #ff0;">RELOADING</span><br>`;
                     }
@@ -122,18 +272,34 @@ class UIController {
             }
 
             if (entity instanceof Building) {
+                if (entity.stats.produces) {
+                    // Add pause/unpause button for production buildings
+                    const paused = entity.productionPaused || false;
+                    html += `<br>`;
+                    html += `<button class="build-button" id="pauseProductionBtn" style="grid-column: 1 / -1; margin-top: 5px; ${paused ? 'background: #0f0;' : 'background: #f00;'}">`;
+                    html += paused ? '▶ RESUME PRODUCTION' : '⏸ PAUSE PRODUCTION';
+                    html += `</button>`;
+                }
                 if (entity.currentProduction) {
                     const progress = (entity.getProductionProgress() * 100).toFixed(0);
                     html += `<br>Building: ${entity.currentProduction.stats.name}<br>`;
-                    html += `Progress: ${progress}%<br>`;
+                    html += `<span class="building-progress">Progress: ${progress}%</span><br>`;
                 }
                 if (entity.productionQueue.length > 0) {
-                    html += `Queue: ${entity.productionQueue.length}<br>`;
+                    html += `<span class="building-queue">Queue: ${entity.productionQueue.length}</span><br>`;
                 }
             }
 
             html += `</div>`;
             html += `<div class="health-bar"><div class="health-fill" style="width: ${entity.getHealthPercent() * 100}%"></div></div>`;
+            
+            this.selectionInfoEl.innerHTML = html;
+            
+            // Use event delegation for pause button (prevents losing listener on redraw)
+            if (entity instanceof Building && entity.stats.produces) {
+                // Store building reference in data attribute for event delegation
+                this.selectionInfoEl.setAttribute('data-building-id', entity.id || `${entity.x}-${entity.y}`);
+            }
         } else {
             html += `<div class="unit-info">`;
             html += `<strong>${selected.length} units selected</strong><br>`;
@@ -154,6 +320,60 @@ class UIController {
         this.selectionInfoEl.innerHTML = html;
     }
 
+    updateSelectionHP(entity) {
+        // Only update HP display without redrawing entire selection
+        const hpEl = this.selectionInfoEl.querySelector('.selection-hp');
+        if (hpEl) {
+            hpEl.textContent = `HP: ${Math.floor(entity.hp)}/${entity.maxHp}`;
+        }
+        const healthFill = this.selectionInfoEl.querySelector('.health-fill');
+        if (healthFill) {
+            healthFill.style.width = `${entity.getHealthPercent() * 100}%`;
+        }
+    }
+
+    updateSelectionAmmo(entity) {
+        // Update ammo display without redrawing entire selection
+        const ammoEl = this.selectionInfoEl.querySelector('.selection-ammo');
+        if (ammoEl) {
+            ammoEl.textContent = `Ammo: ${entity.ammo}/${entity.maxAmmo}`;
+        }
+    }
+
+    updateSelectionBuildingInfo(building, allowRedraw = true) {
+        // Update building production info without full redraw
+        if (building.currentProduction) {
+            const progressEl = this.selectionInfoEl.querySelector('.building-progress');
+            if (progressEl) {
+                const progress = (building.getProductionProgress() * 100).toFixed(0);
+                progressEl.textContent = `Progress: ${progress}%`;
+            }
+        }
+        const queueEl = this.selectionInfoEl.querySelector('.building-queue');
+        if (queueEl) {
+            queueEl.textContent = `Queue: ${building.productionQueue.length}`;
+        } else if (allowRedraw && (building.productionQueue.length > 0 || building.currentProduction)) {
+            // Queue/progress elements don't exist, need to redraw - but prevent infinite loop
+            // Force update by clearing lastSelectionInfo so it redraws, but don't call updateSelectionBuildingInfo again
+            this.lastSelectionInfo = null;
+            // Update selection state signature to include queue info
+            const entity = this.game.selectedEntities[0];
+            if (entity) {
+                const selectionState = JSON.stringify({
+                    type: entity.type,
+                    id: entity.id || entity.x + entity.y,
+                    hp: Math.floor(entity.hp),
+                    maxHp: entity.maxHp,
+                    paused: entity.productionPaused || null,
+                    queue: building.productionQueue.length,
+                    current: building.currentProduction ? building.currentProduction.type : null,
+                });
+                this.lastSelectionInfo = selectionState;
+            }
+            this.updateSelection();
+        }
+    }
+
     updateBuildMenu() {
         const selected = this.game.selectedEntities;
         const player = this.game.humanPlayer;
@@ -170,9 +390,9 @@ class UIController {
 
         // Update button states even if menu doesn't rebuild
         if (!selectionChanged && !buildingsChanged && !creditsChanged && !powerChanged) {
-            // Still update production queue if showing production menu
+            // Only update production queue progress if showing production menu (don't redraw HTML)
             if (currentEntity instanceof Building && currentEntity.stats.produces) {
-                this.updateProductionQueue(currentEntity);
+                this.updateProductionQueueProgress(currentEntity);
             }
             // Update button disabled states without rebuilding menu
             this.updateBuildButtonStates(player);
@@ -268,7 +488,17 @@ class UIController {
         for (const [unitType, stats] of Object.entries(UNIT_TYPES)) {
             if (!building.canProduce(unitType)) continue;
 
-            const canBuild = player.canBuild(unitType, true);
+            // Check airplane limit (1 per airfield)
+            let canBuild = player.canBuild(unitType, true);
+            if (unitType === 'AIRPLANE' && building.type === 'AIRFIELD') {
+                const existingAirplane = this.game.units.find(u => 
+                    u.isAirplane && u.homeAirfield === building && u.isAlive()
+                );
+                if (existingAirplane) {
+                    canBuild = false;
+                }
+            }
+
             const disabled = !canBuild ? 'disabled' : '';
 
             html += `<button class="build-button" data-unit="${unitType}" ${disabled}>`;
@@ -283,23 +513,61 @@ class UIController {
         this.updateProductionQueue(building);
     }
 
-    updateProductionQueue(building) {
+    updateProductionQueue(building, forceUpdate = false) {
+        // Create queue state signature to detect changes
+        const queueState = JSON.stringify({
+            current: building.currentProduction ? building.currentProduction.type : null,
+            queue: building.productionQueue.map(item => item.type),
+            paused: building.productionPaused || false,
+        });
+
+        // Only redraw if queue state changed or forced
+        if (!forceUpdate && this.lastQueueState === queueState) {
+            // Just update progress bar if building is producing
+            if (building.currentProduction) {
+                this.updateProductionQueueProgress(building);
+            }
+            return;
+        }
+
+        this.lastQueueState = queueState;
+
         let html = '';
 
         if (building.currentProduction) {
             const progress = (building.getProductionProgress() * 100).toFixed(0);
             html += `<div class="queue-item">`;
-            html += `${building.currentProduction.stats.name}`;
+            html += `<span>${building.currentProduction.stats.name}</span>`;
+            html += `<button class="queue-cancel" data-index="-1" title="Cancel">×</button>`;
             html += `<div class="queue-progress" style="width: ${progress}%"></div>`;
             html += `</div>`;
         }
 
         for (let i = 0; i < building.productionQueue.length; i++) {
             const item = building.productionQueue[i];
-            html += `<div class="queue-item">${item.stats.name}</div>`;
+            html += `<div class="queue-item">`;
+            html += `<span>${item.stats.name}</span>`;
+            html += `<button class="queue-cancel" data-index="${i}" title="Cancel">×</button>`;
+            html += `</div>`;
+        }
+
+        // Show pause indicator if paused
+        if (building.productionPaused && (building.currentProduction || building.productionQueue.length > 0)) {
+            html += `<div style="padding: 5px; text-align: center; color: #ff0; font-size: 11px;">⏸ PAUSED</div>`;
         }
 
         this.buildQueueEl.innerHTML = html;
+    }
+
+    updateProductionQueueProgress(building) {
+        // Only update progress bar without redrawing entire queue
+        if (!building.currentProduction) return;
+        
+        const progressBar = this.buildQueueEl.querySelector('.queue-progress');
+        if (progressBar) {
+            const progress = (building.getProductionProgress() * 100).toFixed(0);
+            progressBar.style.width = `${progress}%`;
+        }
     }
 
     updatePowerButtons(player) {
@@ -339,6 +607,70 @@ class UIController {
     showVictoryScreen(winner) {
         const gameMenu = document.getElementById('gameMenu');
         const message = winner === this.game.humanPlayer ? 'VICTORY!' : 'DEFEAT';
+        
+        const perfStats = this.game.profiler.getStats();
+        const gameStats = this.game.stats || {};
+
+        let statsHtml = '<div style="margin: 15px 0; font-size: 12px; color: #0f0; border: 1px solid #0f0; padding: 10px;">';
+        statsHtml += '<div style="font-weight: bold; margin-bottom: 10px; color: #0f0;">GAME STATISTICS</div>';
+        
+        // Units
+        statsHtml += `<div style="margin-bottom: 5px;"><strong>Units Built:</strong> ${gameStats.unitsBuilt || 0}</div>`;
+        if (gameStats.unitsBuiltByType && Object.keys(gameStats.unitsBuiltByType).length > 0) {
+            statsHtml += '<div style="margin-left: 10px; font-size: 11px; opacity: 0.8;">';
+            for (const [type, count] of Object.entries(gameStats.unitsBuiltByType)) {
+                const unitName = UNIT_TYPES[type]?.name || type;
+                statsHtml += `${unitName}: ${count}<br>`;
+            }
+            statsHtml += '</div>';
+        }
+        
+        // Kills
+        statsHtml += `<div style="margin-top: 10px; margin-bottom: 5px;"><strong>Enemies Killed:</strong> ${gameStats.enemiesKilled || 0}</div>`;
+        if (gameStats.enemiesKilledByType && Object.keys(gameStats.enemiesKilledByType).length > 0) {
+            statsHtml += '<div style="margin-left: 10px; font-size: 11px; opacity: 0.8;">';
+            for (const [type, count] of Object.entries(gameStats.enemiesKilledByType)) {
+                const unitName = UNIT_TYPES[type]?.name || type;
+                statsHtml += `${unitName}: ${count}<br>`;
+            }
+            statsHtml += '</div>';
+        }
+        statsHtml += `<div style="margin-top: 10px; margin-bottom: 5px;"><strong>Player Units Lost:</strong> ${gameStats.playerUnitsLost || 0}</div>`;
+        if (gameStats.playerUnitsLostByType && Object.keys(gameStats.playerUnitsLostByType).length > 0) {
+            statsHtml += '<div style="margin-left: 10px; font-size: 11px; opacity: 0.8;">';
+            for (const [type, count] of Object.entries(gameStats.playerUnitsLostByType)) {
+                const unitName = UNIT_TYPES[type]?.name || type;
+                statsHtml += `${unitName}: ${count}<br>`;
+            }
+            statsHtml += '</div>';
+        }
+        statsHtml += `<div style="margin-bottom: 5px;"><strong>Total Units Killed:</strong> ${gameStats.unitsKilled || 0}</div>`;
+        
+        // Buildings
+        statsHtml += `<div style="margin-top: 10px; margin-bottom: 5px;"><strong>Buildings Built:</strong> ${gameStats.buildingsBuilt || 0}</div>`;
+        if (gameStats.buildingsBuiltByType && Object.keys(gameStats.buildingsBuiltByType).length > 0) {
+            statsHtml += '<div style="margin-left: 10px; font-size: 11px; opacity: 0.8;">';
+            for (const [type, count] of Object.entries(gameStats.buildingsBuiltByType)) {
+                const buildingName = BUILDING_TYPES[type]?.name || type;
+                statsHtml += `${buildingName}: ${count}<br>`;
+            }
+            statsHtml += '</div>';
+        }
+        statsHtml += `<div style="margin-bottom: 5px;"><strong>Buildings Destroyed:</strong> ${gameStats.buildingsDestroyed || 0}</div>`;
+        
+        // Money
+        statsHtml += `<div style="margin-top: 10px; margin-bottom: 5px;"><strong>Money Earned:</strong> $${Math.floor(gameStats.moneyEarned || 0)}</div>`;
+        statsHtml += `<div style="margin-bottom: 5px;"><strong>Money Spent:</strong> $${Math.floor(gameStats.moneySpent || 0)}</div>`;
+        statsHtml += `<div style="margin-bottom: 5px;"><strong>Net Profit:</strong> $${Math.floor((gameStats.moneyEarned || 0) - (gameStats.moneySpent || 0))}</div>`;
+        
+        statsHtml += '</div>';
+        
+        // Performance stats
+        statsHtml += '<div style="margin: 15px 0; font-size: 12px; color: #0f0;">';
+        statsHtml += '<div style="font-weight: bold; margin-bottom: 5px;">PERFORMANCE</div>';
+        statsHtml += `<div>Average FPS: ${perfStats.fps}</div>`;
+        statsHtml += `<div>Avg Frame Time: ${perfStats.avgFrameTime}ms</div>`;
+        statsHtml += '</div>';
 
         gameMenu.innerHTML = `
             <div class="menu-title">${message}</div>
@@ -347,9 +679,334 @@ class UIController {
                     'You have destroyed all enemy forces!' :
                     'Your base has been destroyed!'}
             </div>
+            ${statsHtml}
             <button class="menu-button" onclick="location.reload()">PLAY AGAIN</button>
         `;
 
         gameMenu.classList.remove('hidden');
+    }
+
+    renderPerformanceStats() {
+        if (!this.game.profiler.enabled) return;
+        
+        const stats = this.game.profiler.getStats();
+        const ctx = this.game.renderer.ctx;
+        
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(10, 10, 200, 120);
+        
+        ctx.fillStyle = '#0f0';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'left';
+        
+        let y = 25;
+        ctx.fillText(`FPS: ${stats.fps}`, 15, y);
+        y += 15;
+        ctx.fillText(`Frame: ${stats.avgFrameTime}ms`, 15, y);
+        y += 15;
+        ctx.fillText(`Update: ${stats.profiles.update.avg}ms`, 15, y);
+        y += 15;
+        ctx.fillText(`Render: ${stats.profiles.render.avg}ms`, 15, y);
+        y += 15;
+        ctx.fillText(`AI: ${stats.profiles.ai.avg}ms`, 15, y);
+        y += 15;
+        ctx.fillText(`Pathfind: ${stats.profiles.pathfinding.avg}ms`, 15, y);
+        
+        ctx.restore();
+    }
+
+    updateSaveList() {
+        if (!this.saveListEl) return;
+        
+        const saves = this.game.saveLoadManager.getSaveList();
+        let html = '';
+        
+        if (saves.length === 0) {
+            html = '<div style="padding: 10px; text-align: center; color: #0f0; opacity: 0.5; font-size: 11px;">No saves</div>';
+        } else {
+            for (let i = 0; i < saves.length; i++) {
+                const save = saves[i];
+                const date = new Date(save.timestamp).toLocaleString();
+                const saveNameEscaped = save.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+                html += `<div class="save-item" data-save-index="${i}" style="padding: 5px; margin: 3px 0; background: #333; border: 1px solid #0f0; cursor: pointer; font-size: 10px;">
+                    <div style="font-weight: bold;">${saveNameEscaped}</div>
+                    <div style="opacity: 0.7; font-size: 9px;">${date}</div>
+                    <button class="delete-save-btn" data-save-index="${i}" style="margin-top: 3px; padding: 2px 5px; background: #f00; border: 1px solid #a00; color: #fff; cursor: pointer; font-size: 8px;">Delete</button>
+                </div>`;
+            }
+        }
+        
+        this.saveListEl.innerHTML = html;
+        
+        // Add event listeners
+        const saveItems = this.saveListEl.querySelectorAll('.save-item');
+        saveItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.classList.contains('delete-save-btn')) return;
+                const index = parseInt(item.dataset.saveIndex);
+                const save = saves[index];
+                if (save) {
+                    this.game.saveLoadManager.loadGame(save.name);
+                }
+            });
+        });
+        
+        const deleteBtns = this.saveListEl.querySelectorAll('.delete-save-btn');
+        deleteBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const index = parseInt(btn.dataset.saveIndex);
+                const save = saves[index];
+                if (save) {
+                    this.game.saveLoadManager.deleteSave(save.name);
+                    this.updateSaveList();
+                }
+            });
+        });
+    }
+
+    showLoadMenu() {
+        const saves = this.game.saveLoadManager.getSaveList();
+        if (saves.length === 0) {
+            showNotification('No save files found');
+            return;
+        }
+        
+        // Show modal with save list
+        const modal = document.createElement('div');
+        modal.id = 'loadGameModal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        `;
+        
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background: #222;
+            border: 3px solid #0f0;
+            padding: 20px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            width: 90%;
+        `;
+        
+        let html = '<div class="sidebar-header" style="margin-bottom: 15px;">LOAD GAME</div>';
+        html += '<div style="max-height: 400px; overflow-y: auto;">';
+        
+        for (const save of saves) {
+            const date = new Date(save.timestamp).toLocaleString();
+            const saveNameEscaped = save.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+            html += `<div style="padding: 10px; margin: 5px 0; background: #333; border: 1px solid #0f0; position: relative;">
+                <div style="cursor: pointer; padding-right: 60px;" 
+                    onmouseover="this.parentElement.style.background='#444'" 
+                    onmouseout="this.parentElement.style.background='#333'"
+                    onclick="game.saveLoadManager.loadGame('${save.name.replace(/'/g, "\\'")}'); const modal = document.getElementById('loadGameModal'); if(modal) { modal.remove(); } game.isPaused = false;">
+                    <div style="font-weight: bold; color: #0f0;">${saveNameEscaped}</div>
+                    <div style="opacity: 0.7; font-size: 12px; margin-top: 5px;">${date}</div>
+                </div>
+                <button style="position: absolute; top: 10px; right: 10px; padding: 5px 10px; background: #f00; border: 1px solid #a00; color: #fff; cursor: pointer; font-size: 10px;"
+                    onclick="if(confirm('Delete save: ${saveNameEscaped.replace(/'/g, "\\'")}?')) { game.saveLoadManager.deleteSave('${save.name.replace(/'/g, "\\'")}'); const modal = document.getElementById('loadGameModal'); if(modal) { modal.remove(); } game.ui.showLoadMenu(); }">DELETE</button>
+            </div>`;
+        }
+        
+        html += '</div>';
+        html += '<button class="menu-button" style="margin-top: 15px; width: 100%;" onclick="const modal = document.getElementById(\'loadGameModal\'); if(modal) { modal.remove(); } game.isPaused = false;">CANCEL</button>';
+        
+        content.innerHTML = html;
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+                this.game.isPaused = false;
+            }
+        });
+    }
+
+    showSettingsModal() {
+        // Check if modal already exists
+        const existingModal = document.getElementById('settingsModal');
+        if (existingModal) {
+            return; // Don't create duplicate
+        }
+
+        // Pause game
+        this.game.isPaused = true;
+
+        // Create modal
+        const modal = document.createElement('div');
+        modal.id = 'settingsModal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        `;
+        
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background: #222;
+            border: 3px solid #0f0;
+            padding: 20px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            width: 90%;
+        `;
+        
+        let html = '<div class="sidebar-header" style="margin-bottom: 15px; font-size: 18px;">⚙️ GAME SETTINGS</div>';
+        html += '<div style="display: flex; flex-direction: column; gap: 10px;">';
+        
+        // Save Game button
+        html += '<button class="menu-button" onclick="const name = prompt(\'Enter save name:\', \'Save \' + new Date().toLocaleString()); if(name) { game.saveLoadManager.saveGame(name); showNotification(\'Game saved!\'); const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.isPaused = false; }">💾 SAVE GAME</button>';
+        
+        // Load Game button
+        html += '<button class="menu-button" onclick="const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.ui.showLoadMenu();">📂 LOAD GAME</button>';
+        
+        // Controls button
+        html += '<button class="menu-button" onclick="const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.ui.showControlsModal();">🎮 CONTROLS</button>';
+        
+        // New Game button
+        html += '<button class="menu-button" style="background: #333; border-color: #0f0;" onclick="if(confirm(\'Start a new game? Current progress will be lost.\')) { const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.isPaused = false; if(game.newGame) { game.newGame(); } else { location.reload(); } }">🆕 NEW GAME</button>';
+        
+        // Surrender button
+        html += '<button class="menu-button" style="background: #333; border-color: #f00; color: #f00;" onclick="if(confirm(\'Surrender? This will end the current game.\')) { const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.isPaused = false; if(game.surrender) { game.surrender(); } else { game.humanPlayer.defeated = true; for(const b of game.buildings) { if(b.owner === game.humanPlayer) b.hp = 0; } game.checkVictoryCondition(); } }">🏳️ SURRENDER</button>';
+        
+        html += '</div>';
+        html += '<button class="menu-button" style="margin-top: 15px; width: 100%;" onclick="const modal = document.getElementById(\'settingsModal\'); if(modal) { modal.remove(); } game.isPaused = false;">CLOSE</button>';
+        
+        content.innerHTML = html;
+        modal.appendChild(content);
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+                this.game.isPaused = false;
+            }
+        });
+        
+        document.body.appendChild(modal);
+    }
+
+    showControlsModal() {
+        // Create modal
+        const modal = document.createElement('div');
+        modal.id = 'controlsModal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        `;
+        
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background: #222;
+            border: 3px solid #0f0;
+            padding: 20px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            width: 90%;
+        `;
+        
+        let html = '<div class="sidebar-header" style="margin-bottom: 15px; font-size: 18px;">🎮 GAME CONTROLS</div>';
+        html += '<div style="font-size: 12px; line-height: 1.6;">';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">MOUSE CONTROLS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Left Click:</strong> Select units/buildings</div>';
+        html += '<div><strong>Left Click + Drag:</strong> Select multiple units (selection box)</div>';
+        html += '<div><strong>Right Click:</strong> Move selected units / Attack target</div>';
+        html += '<div><strong>Right Click (on ground):</strong> Move to location</div>';
+        html += '<div><strong>Right Click (on enemy):</strong> Attack target</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">KEYBOARD SHORTCUTS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>WASD / Arrow Keys:</strong> Move camera</div>';
+        html += '<div><strong>Space:</strong> Center camera on selected units</div>';
+        html += '<div><strong>Delete:</strong> Delete selected buildings</div>';
+        html += '<div><strong>1:</strong> Create Line Formation</div>';
+        html += '<div><strong>2:</strong> Create Box Formation</div>';
+        html += '<div><strong>3:</strong> Create Wedge Formation</div>';
+        html += '<div><strong>4:</strong> Create Column Formation</div>';
+        html += '<div><strong>F3:</strong> Toggle Performance Profiler</div>';
+        html += '<div><strong>ESC:</strong> Cancel building placement / Deselect</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">BUILDING CONTROLS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Select Building:</strong> View production queue</div>';
+        html += '<div><strong>Click Unit in Build Menu:</strong> Add to production queue</div>';
+        html += '<div><strong>Click × on Queue Item:</strong> Cancel production</div>';
+        html += '<div><strong>Pause/Resume Button:</strong> Pause/resume production</div>';
+        html += '<div><strong>Right Click (while placing):</strong> Cancel placement</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">SPECIAL POWERS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Recon Sweep:</strong> Reveal area of map (always available)</div>';
+        html += '<div><strong>Airstrike:</strong> Requires Airfield (unlocks with air units)</div>';
+        html += '<div><strong>Ion Cannon:</strong> Requires Superweapon building</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">UNIT FORMATIONS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div>Select multiple units and press <strong>1-4</strong> to create formations</div>';
+        html += '<div>Units in formation move together and maintain formation</div>';
+        html += '<div>Right-click move on individual unit removes it from formation</div>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">GAME MECHANICS</strong></div>';
+        html += '<div style="margin-left: 10px; margin-bottom: 10px;">';
+        html += '<div><strong>Credits:</strong> Earned from harvesting resources</div>';
+        html += '<div><strong>Power:</strong> Generated by Power Plants, consumed by buildings</div>';
+        html += '<div><strong>Low Power:</strong> Slows construction and production</div>';
+        html += '<div><strong>Tech Tiers:</strong> Unlock by building Tech Center / Advanced Tech Center</div>';
+        html += '<div><strong>Fog of War:</strong> Unexplored areas are hidden</div>';
+        html += '<div><strong>Radar:</strong> Reveals map when Radar Dome is built</div>';
+        html += '</div>';
+        
+        html += '</div>';
+        html += '<button class="menu-button" style="margin-top: 15px; width: 100%;" onclick="const modal = document.getElementById(\'controlsModal\'); if(modal) { modal.remove(); } game.isPaused = false;">CLOSE</button>';
+        
+        content.innerHTML = html;
+        modal.appendChild(content);
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+                this.game.isPaused = false;
+            }
+        });
+        
+        document.body.appendChild(modal);
     }
 }

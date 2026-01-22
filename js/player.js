@@ -13,8 +13,10 @@ class Player {
         this.specialPowers = {
             recon: { cooldown: 0, available: true },
             airstrike: { cooldown: 0, available: false },
+            airdrop: { cooldown: 0, available: false },
             superweapon: { cooldown: 0, available: false },
         };
+        this.hasRadar = false; // Track if player has operational radar dome
         this.defeated = false;
     }
 
@@ -40,6 +42,9 @@ class Player {
 
         for (const building of buildings) {
             if (building.owner !== this || !building.isAlive()) continue;
+            
+            // CRITICAL: Only count operational buildings (construction must be complete)
+            if (building.isUnderConstruction || !building.isOperational) continue;
 
             this.powerGenerated += building.stats.powerGenerate || 0;
             this.powerConsumed += building.stats.powerConsume || 0;
@@ -58,11 +63,27 @@ class Player {
     updateTechTree(buildings) {
         const hadTier2 = this.unlockedTiers.includes(2);
         const hadTier3 = this.unlockedTiers.includes(3);
+        const hadAirstrike = this.specialPowers.airstrike.available;
+        const hadAirdrop = this.specialPowers.airdrop.available;
+        const hadSuperweapon = this.specialPowers.superweapon.available;
+        const hadRadar = this.hasRadar;
 
-        // Check for tech unlocks
+        // Reset tech unlocks - we'll recalculate based on operational buildings
+        // Keep tier 1 (always available)
+        this.unlockedTiers = [1];
+        this.specialPowers.airstrike.available = false;
+        this.specialPowers.airdrop.available = false;
+        this.specialPowers.superweapon.available = false;
+        this.hasRadar = false;
+
+        // Check for tech unlocks - ONLY from operational buildings
         for (const building of buildings) {
             if (building.owner !== this || !building.isAlive()) continue;
+            
+            // CRITICAL: Only check operational buildings (construction must be complete)
+            if (building.isUnderConstruction || !building.isOperational) continue;
 
+            // Tier unlocks
             if (building.stats.unlocks === 'tier2' && !this.unlockedTiers.includes(2)) {
                 this.unlockedTiers.push(2);
             }
@@ -71,14 +92,20 @@ class Player {
                 this.unlockedTiers.push(3);
             }
 
-            // Unlock airstrike with airfield
+            // Unlock airstrike and airdrop with operational airfield
             if (building.stats.produces && building.stats.produces.includes('air')) {
                 this.specialPowers.airstrike.available = true;
+                this.specialPowers.airdrop.available = true;
             }
 
-            // Unlock superweapon
+            // Unlock superweapon with operational superweapon building
             if (building.stats.isSuperweapon) {
                 this.specialPowers.superweapon.available = true;
+            }
+
+            // Unlock radar with operational radar dome
+            if (building.stats.revealsMap) {
+                this.hasRadar = true;
             }
         }
 
@@ -88,6 +115,15 @@ class Player {
         }
         if (!hadTier3 && this.unlockedTiers.includes(3) && !this.isAI) {
             showNotification('Tier 3 Technology Unlocked!');
+        }
+        if (!hadAirstrike && this.specialPowers.airstrike.available && !this.isAI) {
+            showNotification('Airstrike Available!');
+        }
+        if (!hadAirdrop && this.specialPowers.airdrop.available && !this.isAI) {
+            showNotification('Air Drop Available!');
+        }
+        if (!hadSuperweapon && this.specialPowers.superweapon.available && !this.isAI) {
+            showNotification('Ion Cannon Available!');
         }
     }
 

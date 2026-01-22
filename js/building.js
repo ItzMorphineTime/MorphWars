@@ -10,6 +10,7 @@ class Building extends Entity {
         this.productionQueue = [];
         this.currentProduction = null;
         this.productionProgress = 0;
+        this.productionPaused = false;  // Allow pausing production
         this.rallyPoint = { x: worldPos.x, y: worldPos.y + stats.height * TILE_SIZE };
         this.lastAttack = 0;
         this.hasSpawnedHarvester = false;  // For refineries
@@ -82,7 +83,26 @@ class Building extends Entity {
     }
 
     updateProduction(deltaTime, game) {
+        // Don't update if paused
+        if (this.productionPaused) return;
+
         if (!this.currentProduction && this.productionQueue.length > 0) {
+            // Check airplane limit before starting production
+            const nextItem = this.productionQueue[0];
+            if (nextItem && nextItem.type === 'AIRPLANE' && this.type === 'AIRFIELD') {
+                const existingAirplane = game.units.find(u => 
+                    u.isAirplane && u.homeAirfield === this && u.isAlive()
+                );
+                if (existingAirplane) {
+                    // Remove from queue if limit reached
+                    this.productionQueue.shift();
+                    if (!this.owner.isAI) {
+                        showNotification('Airfield can only support 1 airplane');
+                    }
+                    return;
+                }
+            }
+            
             this.currentProduction = this.productionQueue.shift();
             this.productionProgress = 0;
         }
@@ -110,6 +130,11 @@ class Building extends Entity {
         }
     }
 
+    toggleProduction() {
+        this.productionPaused = !this.productionPaused;
+        return this.productionPaused;
+    }
+
     spawnUnit(unitData, game) {
         // Find spawn location near building
         const spawnTile = this.findSpawnLocation(game);
@@ -120,14 +145,60 @@ class Building extends Entity {
             return;
         }
 
+        // Charge credits when unit finishes building
+        if (!this.owner.spend(unitData.stats.cost)) {
+            // Can't afford - re-queue
+            this.productionQueue.unshift(unitData);
+            this.currentProduction = null;
+            if (!this.owner.isAI) {
+                showNotification('Insufficient credits to complete unit');
+            }
+            return;
+        }
+
         const spawnPos = tileToWorld(spawnTile.x, spawnTile.y);
         const unit = new Unit(spawnPos.x, spawnPos.y, unitData.type, unitData.stats, this.owner);
 
-        // Move to rally point
-        unit.moveTo(this.rallyPoint.x, this.rallyPoint.y, game);
+        // Airplane-specific: assign home airfield and check limit
+        if (unit.isAirplane) {
+            // Check if airfield already has an airplane
+            const existingAirplane = game.units.find(u => 
+                u.isAirplane && u.homeAirfield === this && u.isAlive()
+            );
+            if (existingAirplane) {
+                // Already has an airplane - re-queue
+                this.productionQueue.unshift(unitData);
+                this.currentProduction = null;
+                if (!this.owner.isAI) {
+                    showNotification('Airfield can only support 1 airplane');
+                }
+                return;
+            }
+            unit.homeAirfield = this;
+            unit.flyByState = 'idle';
+            // Spawn airplane on top of airfield in landed state
+            unit.x = this.x;
+            unit.y = this.y;
+            unit.landed = true;
+            unit.velocity.x = 0;
+            unit.velocity.y = 0;
+            // Update map position
+            const airfieldTile = worldToTile(this.x, this.y);
+            game.map.setUnit(airfieldTile.x, airfieldTile.y, unit);
+        } else {
+            // Move to rally point
+            unit.moveTo(this.rallyPoint.x, this.rallyPoint.y, game);
+        }
 
         game.units.push(unit);
         game.map.setUnit(spawnTile.x, spawnTile.y, unit);
+
+        // Track stats for human player
+        if (this.owner === game.humanPlayer && game.stats) {
+            game.stats.unitsBuilt++;
+            game.stats.unitsBuiltByType[unitData.type] = (game.stats.unitsBuiltByType[unitData.type] || 0) + 1;
+            game.stats.moneySpent += unitData.stats.cost;
+        }
     }
 
     findSpawnLocation(game) {
@@ -166,14 +237,16 @@ class Building extends Entity {
 
     cancelProduction(index) {
         if (index === -1 && this.currentProduction) {
-            // Cancel current production
-            this.owner.credits += Math.floor(this.currentProduction.stats.cost * 0.8);
+            // Cancel current production - refund partial cost based on progress
+            const progress = this.getProductionProgress();
+            const refund = Math.floor(this.currentProduction.stats.cost * (1 - progress * 0.5)); // 50-100% refund
+            this.owner.credits += refund;
             this.currentProduction = null;
             this.productionProgress = 0;
         } else if (index >= 0 && index < this.productionQueue.length) {
-            // Cancel queued item
+            // Cancel queued item - full refund (no credits charged yet)
             const item = this.productionQueue.splice(index, 1)[0];
-            this.owner.credits += item.stats.cost;
+            // No refund needed - credits weren't charged when queued
         }
     }
 
@@ -201,14 +274,20 @@ class Building extends Entity {
         let nearest = null;
         let nearestDist = Infinity;
 
+        // Check if building can attack air (only AA turrets can attack airplanes)
+        const canAttackAir = this.stats.damageType === 'aa';
+
         for (const unit of game.units) {
             if (unit.owner === this.owner || !unit.isAlive()) continue;
+
+            // Skip airplanes unless this building is an AA turret
+            if (unit.isAirplane && !canAttackAir) continue;
 
             const dist = distance(this.x, this.y, unit.x, unit.y);
             if (dist <= range && dist < nearestDist) {
                 // AA turrets prioritize air units
-                if (this.stats.damageType === 'aa') {
-                    if (unit.stats.category === 'air') {
+                if (canAttackAir) {
+                    if (unit.stats.category === 'air' || unit.isAirplane) {
                         nearest = unit;
                         nearestDist = dist;
                     }

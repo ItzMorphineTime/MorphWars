@@ -1,7 +1,7 @@
 // Map and terrain system
 
 class GameMap {
-    constructor(width, height, mapType = MAP_GENERATION.DEFAULT_TYPE) {
+    constructor(width, height, mapType = MAP_GENERATION.DEFAULT_TYPE, skipResourceGeneration = false, terrainSeed = null) {
         this.width = width;
         this.height = height;
         this.mapType = mapType;
@@ -11,8 +11,13 @@ class GameMap {
         this.heightMapGenerator = null;
 
         this.initializeTiles();
-        this.generateTerrainWithHeightMap();
-        this.placeResourceNodes();
+        // Use provided seed if loading from save, otherwise generate random
+        this.generateTerrainWithHeightMap(terrainSeed);
+        
+        // Skip resource generation if loading from save
+        if (!skipResourceGeneration) {
+            this.placeResourceNodes();
+        }
     }
 
     update(deltaTime) {
@@ -51,9 +56,11 @@ class GameMap {
         return this.tiles[y * this.width + x];
     }
 
-    generateTerrainWithHeightMap() {
+    generateTerrainWithHeightMap(seed = null) {
         // Generate heightmap using Perlin noise
-        this.heightMapGenerator = new HeightMapGenerator(this.width, this.height, Math.random());
+        // Use provided seed if loading from save, otherwise random
+        const heightmapSeed = seed !== null ? seed : Math.random();
+        this.heightMapGenerator = new HeightMapGenerator(this.width, this.height, heightmapSeed);
         this.heightMapGenerator.generate(this.mapType);
 
         // Convert heightmap to terrain tiles
@@ -193,13 +200,16 @@ class GameMap {
                 const tile = this.getTile(x + dx, y + dy);
                 if (tile) {
                     tile.building = null;
-                    tile.blocked = false;
+                    // Only unblock if terrain allows (rock/water should stay blocked)
+                    if (tile.terrain !== 'rock' && tile.terrain !== 'water') {
+                        tile.blocked = false;
+                    }
                 }
             }
         }
     }
 
-    updateFogOfWar(player, entities) {
+    updateFogOfWar(player, entities, airplanes = null) {
         // Reset all tiles to explored
         for (const tile of this.tiles) {
             if (!tile.fogOfWar[player.id]) {
@@ -209,11 +219,12 @@ class GameMap {
             }
         }
 
-        // Update visible tiles based on player entities
+        // Update visible tiles based on player entities (including airplane units)
         for (const entity of entities) {
             if (entity.owner !== player) continue;
 
             const tilePos = worldToTile(entity.x, entity.y);
+            // Use entity's sight range (airplanes have larger sight for recon)
             const sightRange = entity.stats.sight || SIGHT_RANGE;
 
             for (let dy = -sightRange; dy <= sightRange; dy++) {

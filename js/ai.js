@@ -125,26 +125,53 @@ class AIController {
 
     manageEconomy(owned) {
         const harvesters = owned.units.filter(u => u.isHarvester).length;
-        const refineries = owned.buildings.filter(b => b.stats.isRefinery).length;
-        const powerPlants = owned.buildings.filter(b => b.stats.powerGenerate > 0).length;
+        const refineries = owned.buildings.filter(b => b.stats.isRefinery && b.isAlive()).length;
+        const powerPlants = owned.buildings.filter(b => b.stats.powerGenerate > 0 && b.isAlive()).length;
+        
+        // Calculate power ratio
+        const powerRatio = this.player.getPowerRatio();
+        const powerDeficit = this.player.powerConsumed - this.player.powerGenerated;
 
-        // Build power if needed
-        if (this.player.hasLowPower() && powerPlants < this.economyTargets.powerPlants + 2) {
-            this.tryBuildBuilding('POWER_PLANT', owned);
+        // Prioritize power if critically low (affects production speed)
+        if (powerRatio < 0.8 && powerPlants < this.economyTargets.powerPlants + 2) {
+            if (this.tryBuildBuilding('POWER_PLANT', owned)) {
+                return; // Focus on one thing at a time
+            }
         }
 
-        // Build refineries
-        if (refineries < this.economyTargets.refineries && this.player.credits > 2000) {
-            this.tryBuildBuilding('REFINERY', owned);
+        // Build refineries more intelligently - check if we have enough credits and need more income
+        const activeHarvesters = harvesters;
+        const harvesterToRefineryRatio = refineries > 0 ? activeHarvesters / refineries : 0;
+        
+        if (refineries < this.economyTargets.refineries) {
+            // Only build if we have enough credits and aren't in immediate danger
+            const canAffordRefinery = this.player.credits >= 2500; // Slightly higher threshold
+            const hasEnoughPower = powerRatio >= 0.9 || powerPlants >= 2;
+            
+            if (canAffordRefinery && hasEnoughPower) {
+                if (this.tryBuildBuilding('REFINERY', owned)) {
+                    return;
+                }
+            }
         }
 
-        // Build harvesters
-        if (harvesters < this.economyTargets.harvesters * refineries) {
-            this.tryTrainUnit('HARVESTER', owned);
+        // Build harvesters more intelligently - ensure we have enough for each refinery
+        const targetHarvesters = Math.max(this.economyTargets.harvesters, refineries * 1.5);
+        if (harvesters < targetHarvesters && refineries > 0) {
+            // Check if we have idle harvesters first
+            const idleHarvesters = owned.units.filter(u => 
+                u.isHarvester && 
+                (u.harvestState === 'idle' || !u.targetResource)
+            ).length;
+            
+            // Only build more if we don't have enough active harvesters
+            if (idleHarvesters < 1 && harvesters < targetHarvesters) {
+                this.tryTrainUnit('HARVESTER', owned);
+            }
         }
 
-        // Execute build order
-        if (this.buildOrderIndex < this.buildOrder.length) {
+        // Execute build order only if economy is stable
+        if (this.buildOrderIndex < this.buildOrder.length && powerRatio >= 0.9) {
             const buildingType = this.buildOrder[this.buildOrderIndex];
             const stats = BUILDING_TYPES[buildingType];
 
@@ -157,19 +184,30 @@ class AIController {
     }
 
     manageProduction(owned) {
-        const barracks = owned.buildings.filter(b => b.type === 'BARRACKS' && b.isAlive());
-        const factories = owned.buildings.filter(b => b.type === 'WAR_FACTORY' && b.isAlive());
-        const airfields = owned.buildings.filter(b => b.type === 'AIRFIELD' && b.isAlive());
+        const barracks = owned.buildings.filter(b => b.type === 'BARRACKS' && b.isAlive() && b.isOperational);
+        const factories = owned.buildings.filter(b => b.type === 'WAR_FACTORY' && b.isAlive() && b.isOperational);
+        const airfields = owned.buildings.filter(b => b.type === 'AIRFIELD' && b.isAlive() && b.isOperational);
 
-        const infantry = owned.units.filter(u => u.stats.category === 'infantry').length;
-        const vehicles = owned.units.filter(u => u.stats.category === 'vehicle' && !u.isHarvester).length;
-        const air = owned.units.filter(u => u.stats.category === 'air').length;
+        const infantry = owned.units.filter(u => u.stats.category === 'infantry' && u.isAlive()).length;
+        const vehicles = owned.units.filter(u => u.stats.category === 'vehicle' && !u.isHarvester && u.isAlive()).length;
+        const air = owned.units.filter(u => u.stats.category === 'air' && u.isAlive()).length;
 
-        // Produce infantry
-        if (infantry < this.militaryTargets.infantry) {
+        // Calculate production capacity (how many buildings can produce)
+        const availableBarracks = barracks.filter(b => !b.currentProduction && b.productionQueue.length < 2).length;
+        const availableFactories = factories.filter(b => !b.currentProduction && b.productionQueue.length < 2).length;
+
+        // Produce infantry - prioritize if we have low infantry or need more units
+        const infantryNeeded = this.militaryTargets.infantry - infantry;
+        if (infantryNeeded > 0 && availableBarracks > 0) {
             for (const building of barracks) {
-                if (building.productionQueue.length === 0 && !building.currentProduction) {
-                    const unitType = this.player.unlockedTiers.includes(2) ? 'ROCKET_SOLDIER' : 'RIFLEMAN';
+                if (building.productionQueue.length < 2 && !building.currentProduction) {
+                    // Choose unit type based on tier and enemy composition
+                    let unitType = 'RIFLEMAN';
+                    if (this.player.unlockedTiers.includes(2)) {
+                        // Mix of riflemen and rocket soldiers
+                        unitType = Math.random() > 0.6 ? 'ROCKET_SOLDIER' : 'RIFLEMAN';
+                    }
+                    
                     const stats = UNIT_TYPES[unitType];
 
                     if (this.player.canAfford(stats.cost)) {
@@ -181,15 +219,18 @@ class AIController {
             }
         }
 
-        // Produce vehicles
-        if (vehicles < this.militaryTargets.vehicles) {
+        // Produce vehicles - prioritize based on tier and economy
+        const vehiclesNeeded = this.militaryTargets.vehicles - vehicles;
+        if (vehiclesNeeded > 0 && availableFactories > 0) {
             for (const building of factories) {
-                if (building.productionQueue.length === 0 && !building.currentProduction) {
+                if (building.productionQueue.length < 2 && !building.currentProduction) {
                     let unitType = 'LIGHT_TANK';
 
-                    if (this.player.unlockedTiers.includes(3)) {
-                        unitType = Math.random() > 0.5 ? 'HEAVY_TANK' : 'ARTILLERY';
-                    } else if (this.player.unlockedTiers.includes(2)) {
+                    // Smarter unit selection based on tier and credits
+                    if (this.player.unlockedTiers.includes(3) && this.player.credits > 2000) {
+                        // Mix heavy tanks and artillery for tier 3
+                        unitType = Math.random() > 0.4 ? 'HEAVY_TANK' : 'ARTILLERY';
+                    } else if (this.player.unlockedTiers.includes(2) && this.player.credits > 1200) {
                         unitType = 'MEDIUM_TANK';
                     }
 
@@ -204,8 +245,8 @@ class AIController {
             }
         }
 
-        // Produce air units
-        if (air < 3 && airfields.length > 0) {
+        // Produce air units - only if we have good economy
+        if (air < 4 && airfields.length > 0 && this.player.credits > 1500) {
             for (const building of airfields) {
                 if (building.productionQueue.length === 0 && !building.currentProduction) {
                     const stats = UNIT_TYPES['HELICOPTER'];

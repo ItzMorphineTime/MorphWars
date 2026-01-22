@@ -13,8 +13,10 @@ class Renderer {
     }
 
     resizeCanvas() {
-        this.canvas.width = this.canvas.clientWidth;
-        this.canvas.height = this.canvas.clientHeight;
+        // Canvas width should account for sidebar (280px)
+        const sidebarWidth = 280;
+        this.canvas.width = window.innerWidth - sidebarWidth;
+        this.canvas.height = window.innerHeight;
 
         this.minimapCanvas.width = this.minimapCanvas.clientWidth;
         this.minimapCanvas.height = this.minimapCanvas.clientHeight;
@@ -35,8 +37,15 @@ class Renderer {
 
         this.ctx.restore();
 
+        // Airplanes are now regular units, rendered in renderUnits()
+
         this.renderUI();
         this.renderMinimap();
+        
+        // Render performance stats if enabled
+        if (this.game.profiler && this.game.profiler.enabled) {
+            this.game.ui.renderPerformanceStats();
+        }
     }
 
     renderTerrain() {
@@ -239,17 +248,46 @@ class Renderer {
                 this.ctx.stroke();
             } else if (unit.stats.category === 'air') {
                 this.ctx.fillStyle = unitColor;
+                this.ctx.save();
+                this.ctx.translate(unit.x, unit.y);
+                
+                // Airplanes face direction of travel (unless landed)
+                if (unit.isAirplane && unit.angle !== undefined && !unit.landed) {
+                    this.ctx.rotate(unit.angle);
+                }
+                
                 this.ctx.beginPath();
-                this.ctx.moveTo(unit.x, unit.y - size);
-                this.ctx.lineTo(unit.x - size, unit.y + size);
-                this.ctx.lineTo(unit.x + size, unit.y + size);
-                this.ctx.closePath();
+                if (unit.isAirplane) {
+                    // Draw airplane as arrow pointing forward (or sideways if landed)
+                    if (unit.landed) {
+                        // Landed: draw sideways
+                        this.ctx.moveTo(0, -size); // Top point
+                        this.ctx.lineTo(-size * 0.5, size * 0.3); // Left back
+                        this.ctx.lineTo(0, size * 0.3); // Back center
+                        this.ctx.lineTo(size * 0.5, size * 0.3); // Right back
+                        this.ctx.closePath();
+                    } else {
+                        // Flying: draw as arrow pointing forward
+                        this.ctx.moveTo(size, 0); // Front point
+                        this.ctx.lineTo(-size * 0.5, -size * 0.5); // Top back
+                        this.ctx.lineTo(-size * 0.3, 0); // Back center
+                        this.ctx.lineTo(-size * 0.5, size * 0.5); // Bottom back
+                        this.ctx.closePath();
+                    }
+                } else {
+                    // Helicopter - triangle pointing up
+                    this.ctx.moveTo(0, -size);
+                    this.ctx.lineTo(-size, size);
+                    this.ctx.lineTo(size, size);
+                    this.ctx.closePath();
+                }
                 this.ctx.fill();
 
                 // Player color border
                 this.ctx.strokeStyle = unit.owner.color;
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
+                this.ctx.restore();
             } else {
                 this.ctx.fillStyle = unitColor;
                 this.ctx.fillRect(unit.x - size / 2, unit.y - size / 2, size, size);
@@ -260,13 +298,25 @@ class Renderer {
                 this.ctx.strokeRect(unit.x - size / 2, unit.y - size / 2, size, size);
             }
 
-            // Selection circle
+            // Enhanced selection indicator
             if (unit.selected) {
-                this.ctx.strokeStyle = '#fff';
+                // Outer glow
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.arc(unit.x, unit.y, size + 3, 0, Math.PI * 2);
+                this.ctx.stroke();
+                
+                // Inner selection circle
+                this.ctx.strokeStyle = unit.owner.color;
                 this.ctx.lineWidth = 2;
                 this.ctx.beginPath();
-                this.ctx.arc(unit.x, unit.y, size, 0, Math.PI * 2);
+                this.ctx.arc(unit.x, unit.y, size + 1, 0, Math.PI * 2);
                 this.ctx.stroke();
+                
+                // Selection indicator at top
+                this.ctx.fillStyle = unit.owner.color;
+                this.ctx.fillRect(unit.x - 4, unit.y - size - 8, 8, 4);
             }
 
             // Health bar
@@ -322,6 +372,8 @@ class Renderer {
         this.ctx.fillRect(x, y, width * percent, 4);
     }
 
+    // Airplanes are now regular units, rendered in renderUnits()
+
     renderEffects() {
         // Render special power effects
         // Could add particle effects, explosions, etc.
@@ -335,6 +387,8 @@ class Renderer {
         const mouseTile = worldToTile(mouseWorldX, mouseWorldY);
 
         const stats = BUILDING_TYPES[this.game.placingBuilding];
+        if (!stats) return;
+
         const px = mouseTile.x * TILE_SIZE;
         const py = mouseTile.y * TILE_SIZE;
         const w = stats.width * TILE_SIZE;
@@ -342,17 +396,47 @@ class Renderer {
 
         const canPlace = canPlaceBuilding(this.game.map, mouseTile.x, mouseTile.y, stats.width, stats.height, this.game.humanPlayer, this.game);
 
-        this.ctx.fillStyle = canPlace ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+        // Enhanced visual feedback
+        this.ctx.fillStyle = canPlace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)';
         this.ctx.fillRect(px, py, w, h);
 
+        // Draw grid overlay for better placement visualization
+        this.ctx.strokeStyle = canPlace ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 0, 0, 0.5)';
+        this.ctx.lineWidth = 1;
+        for (let ty = 0; ty < stats.height; ty++) {
+            for (let tx = 0; tx < stats.width; tx++) {
+                this.ctx.strokeRect(px + tx * TILE_SIZE, py + ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+        }
+
+        // Border
         this.ctx.strokeStyle = canPlace ? '#0f0' : '#f00';
-        this.ctx.lineWidth = 2;
+        this.ctx.lineWidth = 3;
         this.ctx.strokeRect(px, py, w, h);
 
+        // Building name and cost
         this.ctx.fillStyle = canPlace ? '#0f0' : '#f00';
-        this.ctx.font = '12px monospace';
+        this.ctx.font = 'bold 12px monospace';
         this.ctx.textAlign = 'center';
-        this.ctx.fillText(stats.name, px + w / 2, py + h / 2);
+        this.ctx.fillText(stats.name, px + w / 2, py + h / 2 - 5);
+        
+        this.ctx.font = '10px monospace';
+        this.ctx.fillText(`$${stats.cost}`, px + w / 2, py + h / 2 + 10);
+
+        // Show reason if can't place
+        if (!canPlace && this.game.humanPlayer) {
+            let reason = '';
+            if (!this.game.humanPlayer.canAfford(stats.cost)) {
+                reason = 'Insufficient funds';
+            } else if (stats.powerConsume > 0 && this.game.humanPlayer.hasLowPower()) {
+                reason = 'Low power';
+            } else {
+                reason = 'Invalid location';
+            }
+            this.ctx.fillStyle = '#f00';
+            this.ctx.font = '10px monospace';
+            this.ctx.fillText(reason, px + w / 2, py - 10);
+        }
     }
 
     renderUI() {
@@ -398,11 +482,13 @@ class Renderer {
 
         ctx.clearRect(0, 0, w, h);
 
-        // Check if player has radar dome
+        // Check if player has operational radar dome
         const hasRadarDome = this.game.buildings.some(b =>
             b.owner === this.game.humanPlayer &&
             b.stats.revealsMap &&
-            b.isAlive()
+            b.isAlive() &&
+            !b.isUnderConstruction &&
+            b.isOperational
         );
 
         if (!hasRadarDome) {

@@ -101,6 +101,7 @@ class HeightMapGenerator {
     constructor(width, height, seed = Math.random()) {
         this.width = width;
         this.height = height;
+        this.seed = seed; // Store seed for save/load
         this.perlin = new PerlinNoise(seed);
         this.heightMap = [];
     }
