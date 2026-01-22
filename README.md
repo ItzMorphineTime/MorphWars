@@ -11,12 +11,6 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 
 ---
 
-## 📸 Screenshots
-
-*Coming soon*
-
----
-
 ## ✨ Features
 
 ### 🗺️ **Advanced Procedural Map Generation**
@@ -48,11 +42,14 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Auto-harvester Deployment** - Refineries spawn harvesters automatically
 
 ### ⚔️ **Deep Combat & Unit System**
-- **17 Unit Types** across infantry, vehicles, and air units
+- **18 Unit Types** across infantry, vehicles, and air units
 - **Veterancy System** - Units gain experience and bonuses
-- **Smart Pathfinding** - A* algorithm with collision avoidance
+- **Advanced Pathfinding** - Hierarchical A* algorithm with collision avoidance and waypoint optimization
 - **Rock-Paper-Scissors Combat** - Damage multipliers based on armor/weapon types
+- **Unit Formations** - Line, Box, Wedge, and Column formations with hotkey support
 - **Special Units**:
+  - **Mammoth Tank** - Advanced tech super-heavy tank with explosive rounds
+  - **Airplanes** - Airfield-based aircraft with fly-by attacks and ammo management
   - Harvesters with intelligent resource seeking
   - Medics for infantry healing
   - Artillery with splash damage
@@ -69,18 +66,23 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - Unit spreading to avoid clustering
 
 ### 🎯 **Special Powers**
-- **Recon Sweep** - Reveal large map areas temporarily
-- **Airstrike** - Call in devastating air support
+- **Recon Sweep** - Airplane flies over area to fully reveal fog of war temporarily
+- **Airstrike** - Airplane delivers devastating explosive damage to target area
+- **Air Drop** - Airplane drops 5 random infantry units at target location (requires Airfield)
 - **Ion Cannon** - Ultimate superweapon with massive AOE damage
 
 ### 🎨 **Polish & Quality of Life**
-- **Fog of War** - Explored/Visible/Unexplored states
-- **Minimap** - Real-time strategic overview
-- **Production Queues** - Queue multiple units
+- **Fog of War** - Explored/Visible/Unexplored states with dynamic reveal system
+- **Minimap** - Real-time strategic overview (requires Radar Dome)
+- **Save/Load System** - Save game state to localStorage with multiple save slots
+- **Production Queues** - Queue multiple units with pause/resume and cancellation
 - **Rally Points** - Set unit spawn destinations
-- **Selection Groups** - Multi-select and group commands
+- **Unit Formations** - Create and manage formations with hotkeys (1-4)
+- **Selection Groups** - Multi-select and group commands with focus fire
 - **Attack Move** - Aggressive unit positioning
 - **Repair Bays** - Automatic vehicle healing
+- **Game Statistics** - Track units built, killed, money earned, and more
+- **Settings Modal** - Comprehensive game options and controls reference
 
 ---
 
@@ -112,10 +114,13 @@ That's it! No build process, no npm install, no dependencies.
 
 ### Controls
 - **Left Click** - Select units/buildings
-- **Right Click** - Move/Attack command
+- **Right Click** - Move/Attack command (focus fire on enemies)
 - **Drag Select** - Select multiple units
 - **Shift + Click** - Add to selection
 - **A + Right Click** - Attack move
+- **1-4 Keys** - Create formations (Line, Box, Wedge, Column)
+- **Middle Mouse Drag** - Pan camera across entire map
+- **F3** - Toggle performance profiler
 - **ESC** - Deselect all
 
 ### Getting Started
@@ -131,8 +136,12 @@ That's it! No build process, no npm install, no dependencies.
 - 💎 Prioritize Gem nodes for double resource income
 - 🏔️ Use terrain strategically - mountains create chokepoints
 - 🚁 Helicopters can fly over obstacles but need to reload
+- ✈️ Airplanes require Airfields and have limited ammo - return them to base to reload
+- 🐘 Mammoth Tanks are expensive but devastating - save up for advanced tech
 - ⚡ Build multiple refineries near resource clusters
 - 🎯 Use special powers strategically in critical moments
+- 📊 Save your game frequently - multiple save slots available
+- 🎖️ Formations help coordinate large armies - use hotkeys 1-4
 
 ---
 
@@ -150,6 +159,8 @@ That's it! No build process, no npm install, no dependencies.
 - **Observer Pattern** - Fog of war and visibility updates
 - **Configuration-driven** - All gameplay values in constants.js
 - **Performance Optimized** - Throttled updates, spatial hashing, efficient rendering
+- **Save/Load System** - Complete game state serialization with seed preservation
+- **Hierarchical Pathfinding** - Waypoint-based optimization for long-distance paths
 
 ---
 
@@ -171,7 +182,9 @@ Game/
 │   ├── renderer.js         # Canvas rendering
 │   ├── input.js            # Mouse/keyboard handling
 │   ├── ui.js               # User interface
-│   ├── utils.js            # Utility functions
+│   ├── utils.js            # Utility functions & pathfinding
+│   ├── performance.js      # Performance profiler
+│   ├── saveload.js         # Save/load system
 │   └── main.js             # Initialization
 └── README.md
 ```
@@ -224,13 +237,13 @@ CONSTRUCTION_CONFIG: {
 
 ## 🎯 Roadmap
 
+- [x] Unit formations and advanced commands ✅
+- [x] Save/Load game state ✅
 - [ ] Multiplayer support (WebRTC)
 - [ ] Campaign mode with story missions
 - [ ] More unit types and factions
 - [ ] Advanced terrain features (bridges, cliffs)
 - [ ] Sound effects and music
-- [ ] Unit formations and advanced commands
-- [ ] Save/Load game state
 - [ ] Replay system
 - [ ] Map editor
 - [ ] Modding support
@@ -261,6 +274,7 @@ Contributions are welcome! Here's how you can help:
 - Large maps (200x200) may have slower initial generation
 - Pathfinding can struggle with very dense unit clusters
 - AI may occasionally build suboptimally on island maps
+- Save files are stored in browser localStorage (limited to ~5-10MB)
 
 ---
 
