@@ -21,6 +21,15 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - **Islands** - Archipelago with isolated landmasses
   - **Plains** - Wide open grasslands with abundant resources
   - **Highlands** - Dramatic mountain ranges and valleys
+- **Custom Map Editor** - Full-featured map creation tool with:
+  - Terrain painting (Grass, Rock, Water)
+  - Resource node placement (Ore, Gems)
+  - Player spawn point configuration
+  - Adjustable brush size (1-5 tiles)
+  - Grid overlay toggle
+  - Camera pan and zoom controls
+  - Save/Load custom maps to localStorage
+  - Keyboard shortcuts for all tools
 - **Height-based Terrain Coloring** - Visual elevation gradients
 - **Smart Spawn System** - Guarantees fair starting positions on valid land
 
@@ -75,6 +84,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Fog of War** - Explored/Visible/Unexplored states with dynamic reveal system
 - **Minimap** - Real-time strategic overview (requires Radar Dome)
 - **Save/Load System** - Save game state to localStorage with multiple save slots
+- **Custom Maps** - Create, save, and play on custom maps with the built-in map editor
 - **Production Queues** - Queue multiple units with pause/resume and cancellation
 - **Rally Points** - Set unit spawn destinations
 - **Unit Formations** - Create and manage formations with hotkeys (1-4)
@@ -123,6 +133,19 @@ That's it! No build process, no npm install, no dependencies.
 - **F3** - Toggle performance profiler
 - **ESC** - Deselect all
 
+### Map Editor Controls
+- **1-3 Keys** - Switch tools (Terrain, Resource, Erase)
+- **Q/W/E** - Select terrain type (Grass, Rock, Water)
+- **R/T** - Select resource type (Ore, Gems)
+- **S** - Set spawn point at cursor
+- **G** - Toggle grid overlay
+- **Home** - Reset camera position
+- **Ctrl+S** - Save map
+- **Ctrl+O** - Load map
+- **Arrow Keys** - Pan camera
+- **Mouse Wheel** - Zoom in/out
+- **Middle Mouse / Ctrl+Drag** - Pan camera
+
 ### Getting Started
 1. Deploy your MCV (Mobile Construction Vehicle) to create your base
 2. Build Power Plants to generate energy
@@ -142,6 +165,7 @@ That's it! No build process, no npm install, no dependencies.
 - 🎯 Use special powers strategically in critical moments
 - 📊 Save your game frequently - multiple save slots available
 - 🎖️ Formations help coordinate large armies - use hotkeys 1-4
+- 🗺️ Create custom maps with the Map Editor - design unique battlefields and scenarios
 
 ---
 
@@ -185,6 +209,7 @@ Game/
 │   ├── utils.js            # Utility functions & pathfinding
 │   ├── performance.js      # Performance profiler
 │   ├── saveload.js         # Save/load system
+│   ├── mapeditor.js        # Map editor system
 │   └── main.js             # Initialization
 └── README.md
 ```
@@ -239,13 +264,13 @@ CONSTRUCTION_CONFIG: {
 
 - [x] Unit formations and advanced commands ✅
 - [x] Save/Load game state ✅
+- [x] Map editor ✅
 - [ ] Multiplayer support (WebRTC)
 - [ ] Campaign mode with story missions
 - [ ] More unit types and factions
 - [ ] Advanced terrain features (bridges, cliffs)
 - [ ] Sound effects and music
 - [ ] Replay system
-- [ ] Map editor
 - [ ] Modding support
 
 ---

@@ -59,16 +59,31 @@ class Game {
         this.saveLoadManager = new SaveLoadManager(this);
     }
 
-    init(mapSize, mapType, aiCount, aiDifficulty, startingCredits = 5000, startingInfantry = 3) {
+    init(mapSize, mapType, aiCount, aiDifficulty, startingCredits = 5000, startingInfantry = 3, customMapName = null) {
         // Create map
+        let customMapData = null;
+        if (customMapName) {
+            // Load custom map
+            const key = `custom_map_${customMapName}`;
+            const data = localStorage.getItem(key);
+            if (data) {
+                try {
+                    customMapData = JSON.parse(data);
+                } catch (e) {
+                    console.error('Failed to load custom map:', e);
+                    showNotification('Failed to load custom map, using default');
+                }
+            }
+        }
+        
         const sizes = {
             small: 100,
             medium: 150,
             large: 200,
         };
 
-        const size = sizes[mapSize] || 150;
-        this.map = new GameMap(size, size, mapType);
+        const size = customMapData ? customMapData.width : (sizes[mapSize] || 150);
+        this.map = new GameMap(size, size, mapType, false, null, customMapData);
 
         // Create players
         const totalPlayers = aiCount + 1;

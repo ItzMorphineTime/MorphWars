@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta author="Joe Loe">
     <title>Command & Conquer - RTS</title>
     <style>
         * {
@@ -359,6 +360,21 @@
             background: #f90;
             transition: width 0.1s linear;
         }
+        
+        .editor-btn, .terrain-btn, .resource-btn {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 2px solid #0f0;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            opacity: 0.5;
+        }
+        
+        .editor-btn:hover, .terrain-btn:hover, .resource-btn:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -396,6 +412,13 @@
                 <option value="islands">Islands</option>
                 <option value="plains">Plains</option>
                 <option value="highlands">Highlands</option>
+                <option value="custom">Custom Map</option>
+            </select>
+        </div>
+        <div class="menu-option" id="customMapOption" style="display: none;">
+            <label>Custom Map:</label>
+            <select id="customMapSelect">
+                <option value="">Select a custom map...</option>
             </select>
         </div>
         <div class="menu-option">
@@ -418,6 +441,7 @@
         </div>
         <button class="menu-button" id="startGame">START GAME</button>
         <button class="menu-button" id="loadGameMenuBtn">LOAD GAME</button>
+        <button class="menu-button" id="mapEditorBtn" style="background: #333; border-color: #0ff;">MAP EDITOR</button>
     </div>
 
     <div id="gameContainer" class="hidden">
@@ -504,6 +528,7 @@
     <script src="js/renderer.js"></script>
     <script src="js/saveload.js"></script>
     <script src="js/game.js"></script>
+    <script src="js/mapeditor.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

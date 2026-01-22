@@ -1,7 +1,7 @@
 // Map and terrain system
 
 class GameMap {
-    constructor(width, height, mapType = MAP_GENERATION.DEFAULT_TYPE, skipResourceGeneration = false, terrainSeed = null) {
+    constructor(width, height, mapType = MAP_GENERATION.DEFAULT_TYPE, skipResourceGeneration = false, terrainSeed = null, customMapData = null) {
         this.width = width;
         this.height = height;
         this.mapType = mapType;
@@ -9,15 +9,59 @@ class GameMap {
         this.resourceNodes = [];
         this.lastResourceRegen = Date.now();
         this.heightMapGenerator = null;
+        this.customSpawnPoints = null; // Store custom spawn points
 
         this.initializeTiles();
-        // Use provided seed if loading from save, otherwise generate random
-        this.generateTerrainWithHeightMap(terrainSeed);
         
-        // Skip resource generation if loading from save
-        if (!skipResourceGeneration) {
-            this.placeResourceNodes();
+        // Load from custom map data if provided
+        if (customMapData) {
+            this.loadCustomMap(customMapData);
+        } else {
+            // Use provided seed if loading from save, otherwise generate random
+            this.generateTerrainWithHeightMap(terrainSeed);
+            
+            // Skip resource generation if loading from save
+            if (!skipResourceGeneration) {
+                this.placeResourceNodes();
+            }
         }
+    }
+    
+    loadCustomMap(data) {
+        // Restore tiles
+        for (const tileData of data.tiles) {
+            const tile = this.getTile(tileData.x, tileData.y);
+            if (tile) {
+                tile.terrain = tileData.terrain;
+                tile.blocked = tileData.blocked;
+            }
+        }
+        
+        // Restore resource nodes
+        this.resourceNodes = data.resourceNodes.map(nodeData => ({
+            x: nodeData.x,
+            y: nodeData.y,
+            type: nodeData.type,
+            resources: nodeData.resources,
+            maxResources: nodeData.maxResources,
+            valueMultiplier: nodeData.valueMultiplier,
+            color: nodeData.color,
+        }));
+        
+        // Mark resource terrain
+        for (const node of this.resourceNodes) {
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const tile = this.getTile(node.x + dx, node.y + dy);
+                    if (tile && tile.terrain === 'grass') {
+                        tile.terrain = 'resource';
+                    }
+                }
+            }
+        }
+        
+        // Store custom spawn points
+        this.customSpawnPoints = data.spawnPoints || [];
     }
 
     update(deltaTime) {
@@ -251,6 +295,18 @@ class GameMap {
     }
 
     findSpawnLocation(playerIndex, totalPlayers) {
+        // Use custom spawn point if available
+        if (this.customSpawnPoints && this.customSpawnPoints.length > 0) {
+            const customSpawn = this.customSpawnPoints.find(sp => sp.playerIndex === playerIndex);
+            if (customSpawn) {
+                const tile = this.getTile(customSpawn.x, customSpawn.y);
+                if (tile && this.isValidSpawnTile(customSpawn.x, customSpawn.y)) {
+                    console.log(`Player ${playerIndex} using custom spawn: (${customSpawn.x}, ${customSpawn.y})`);
+                    return { x: customSpawn.x, y: customSpawn.y };
+                }
+            }
+        }
+        
         // Place players in corners or edges based on player count
         const spacing = 15;
         let targetX, targetY;
