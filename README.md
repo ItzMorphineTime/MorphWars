@@ -41,7 +41,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Configurable Rarity** - Adjustable spawn rates and values
 
 ### 🏗️ **Strategic Building System**
-- **14 Building Types** - Economy, production, defense, naval, and superweapons
+- **15 Building Types** - Economy, production, defense, naval, and superweapons
 - **Construction Time** - Buildings require time to become operational
 - **Power-based Speed**:
   - Low Power (<100%): 25% construction speed
@@ -54,6 +54,14 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - Produces submarines, warships, and transport ships
   - Allows units on top (no collision)
   - Works even when built entirely in water
+- **Tesla Coil** - Advanced defensive structure:
+  - Requires Tier 2 (Advanced Tech)
+  - Very high damage (300) but long cooldown (5 seconds)
+  - Consumes 150 power (very high consumption)
+  - Cannot attack without sufficient power
+  - Unique lightning bolt visual effect
+- **Power-Dependent Defenses** - Tesla Coils and AA Turrets require power to function
+- **Defensive Projectiles** - All turrets now fire visible projectiles when attacking
 
 ### ⚔️ **Deep Combat & Unit System**
 - **21 Unit Types** across infantry, vehicles, air, and naval units
@@ -71,10 +79,11 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - Maximum 2 harvesters per resource node
   - Push blocking units out of the way
 - **Transport Systems**:
-  - **APC (Armored Personnel Carrier)** - Embark up to 10 infantry units for rapid transport
+  - **APC (Armored Personnel Carrier)** - Embark up to 5 infantry units for rapid transport
   - **Transport Ships** - Naval transport with capacity-based unit loading (50 capacity points)
   - Manual embark/disembark commands with visual indicators
   - Automatic disembark when transport is destroyed
+  - **Embarked units are protected** - Cannot be targeted by enemies while inside transport
 - **Special Units**:
   - **Mammoth Tank** - Advanced tech super-heavy tank with explosive rounds
   - **Airplanes** - Airfield-based aircraft with fly-by attacks and ammo management
@@ -100,13 +109,34 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 
 ### 🎯 **Special Powers**
 - **Recon Sweep** - Airplane flies over area to fully reveal fog of war temporarily
-- **Airstrike** - Airplane delivers devastating explosive damage to target area
+- **Airstrike** - Airplane delivers devastating explosive damage to target area (damages friendly units)
 - **Air Drop** - Airplane drops 5 random infantry units at target location (requires Airfield)
-- **Ion Cannon** - Ultimate superweapon with massive AOE damage
+- **Ion Cannon** - Ultimate superweapon with:
+  - Massive AOE damage (800 base damage)
+  - Damage falloff from center (100% at center, 50% at edge)
+  - Stunning visual effects (charging phase + explosion)
+  - Cooldown reduction: Each operational Ion Cannon building reduces cooldown by 25%
+  - Damages friendly units and buildings (use with caution!)
 
 ### 🎨 **Polish & Quality of Life**
+- **Custom PNG Sprite System** - Beautiful sprite rendering for units and buildings:
+  - Sprite loading and caching system
+  - Smooth rotation based on movement and combat direction
+  - Player color tinting for team identification
+  - Animation support (sprite sheets)
+  - Configurable sprite toggle in main menu and settings
+  - Fallback to colored rectangles if sprites unavailable
+- **Notification System** - In-game alerts with:
+  - Power warnings (low/critical power)
+  - Unit and building attack notifications
+  - Unit lost and building destroyed alerts
+  - Click-to-navigate to event location
+  - Spam prevention with cooldowns and grouping
 - **Fog of War** - Explored/Visible/Unexplored states with dynamic reveal system (optimized incremental updates)
-- **Minimap** - Real-time strategic overview (requires Radar Dome) with throttled rendering for performance
+- **Minimap** - Real-time strategic overview:
+  - Requires Radar Dome AND sufficient power
+  - Disabled when power is insufficient
+  - Throttled rendering for performance
 - **Save/Load System** - Save game state to localStorage with multiple save slots (preserves transport relationships)
 - **Custom Maps** - Create, save, and play on custom maps with the built-in map editor
 - **Production Queues** - Queue multiple units with pause/resume and cancellation
@@ -118,9 +148,20 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Attack Move** - Aggressive unit positioning
 - **Repair Bays** - Automatic vehicle healing
 - **Game Statistics** - Track units built, killed, money earned, and more
-- **Settings Modal** - Comprehensive game options and controls reference
-- **Combat Visual Feedback** - Damage numbers, projectile trails, muzzle flashes, and death animations
-- **Power Management** - Visual power bar showing consumption percentage with color-coded warnings
+- **Settings Modal** - Comprehensive game options and controls reference:
+  - Sprite toggle (enable/disable sprite rendering)
+  - Save/Load game
+  - Controls reference
+- **Combat Visual Feedback** - Enhanced effects system:
+  - Damage numbers with critical hit indicators
+  - Projectile trails for all attacks (units and turrets)
+  - Muzzle flashes at firing positions
+  - Death animations
+  - Tesla Coil lightning bolt effects
+  - Ion Cannon charging and explosion effects
+- **Power Management** - Visual power bar showing consumption percentage with color-coded warnings:
+  - Continuous notifications when power is insufficient
+  - Power-dependent features (defenses, minimap, production speed)
 
 ---
 
@@ -212,17 +253,24 @@ That's it! No build process, no npm install, no dependencies.
 - 🐘 Mammoth Tanks are expensive but devastating - save up for advanced tech
 - ⚡ Build multiple refineries near resource clusters
 - 🎯 Use special powers strategically in critical moments
+- ⚡⚡ Build multiple Ion Cannons to reduce superweapon cooldown (25% per building)
+- ⚡ Ion Cannon and Airstrike damage friendly units - position carefully!
 - 📊 Save your game frequently - multiple save slots available
 - 🎖️ Formations help coordinate large armies - use hotkeys 1-4
 - 🗺️ Create custom maps with the Map Editor - design unique battlefields and scenarios
 - 🚢 Build PORTs on water for naval production - they work even when entirely in water
-- 🚛 Use APCs to rapidly transport infantry across the map
+- 🚛 Use APCs to rapidly transport infantry across the map (embarked units are protected from targeting)
 - ⚓ Naval units can approach coastlines (within 1 tile) to attack land targets
 - 🎯 Control groups (Ctrl+Shift+1-9) help manage large armies efficiently
 - 🎨 Combat visual effects provide feedback on damage and attacks
 - 🚜 Harvesters automatically avoid each other - build multiple refineries near resource clusters
 - 📊 Use camera presets (Ctrl+F1-F4) to quickly jump between key locations
 - ⌨️ Building hotkeys (P, R, B, W, A, G, T) speed up base construction
+- ⚡ Tesla Coils require massive power (150) - ensure sufficient power generation
+- 🎨 Toggle sprites on/off in settings for performance or visual preference
+- 📢 Click notifications to navigate to important events (attacks, losses)
+- 🛡️ Power-dependent defenses (Tesla Coil, AA Turret) won't attack without power
+- 🗺️ Minimap requires both Radar Dome AND sufficient power to function
 
 ---
 
@@ -278,6 +326,8 @@ Game/
 │   ├── effects.js          # Visual effects manager
 │   ├── spatialgrid.js      # Spatial hashing for pathfinding
 │   ├── pool.js             # Object pooling system
+│   ├── spritemanager.js    # Sprite loading and caching
+│   ├── spriterenderer.js   # Sprite rendering with rotation and tinting
 │   └── main.js             # Initialization
 └── README.md
 ```
@@ -333,13 +383,15 @@ CONSTRUCTION_CONFIG: {
 - [x] Unit formations and advanced commands ✅
 - [x] Save/Load game state ✅
 - [x] Map editor ✅
-- [ ] Multiplayer support (WebRTC)
+- [ ] Multiplayer support (WebSocket relay + host-authoritative; see [MULTIPLAYER_PLAN.MD](MULTIPLAYER_PLAN.MD))
 - [ ] Campaign mode with story missions
 - [ ] More unit types and factions
 - [ ] Advanced terrain features (bridges, cliffs)
 - [ ] Sound effects and music
 - [ ] Replay system
 - [ ] Modding support
+
+For balancing research (similar RTS games, best practices, data-driven tuning) and a **prioritized list of future features**, see **[RESEARCH.MD](RESEARCH.MD)**.
 
 ---
 
@@ -359,6 +411,10 @@ Contributions are welcome! Here's how you can help:
 - Add configuration options to constants.js
 - Test with different map types and AI difficulties
 - Update README.md for significant features
+
+### Testing
+- **Unit tests**: Vitest (dev dependency only; game runtime stays dependency-free). See **[Unit Testing Plan](docs/UNIT_TESTING_PLAN.md)** for setup, framework choice, and test targets.
+- After `npm install`, run `npm test` (watch) or `npm run test:run` (single run). Use `npm run test:coverage` for coverage.
 
 ---
 

@@ -300,7 +300,8 @@
             left: 50%;
             transform: translateX(-50%);
             z-index: 100;
-            pointer-events: none;
+            pointer-events: auto; /* Changed to allow clicks */
+            max-width: 400px;
         }
 
         .notification {
@@ -309,7 +310,53 @@
             color: #0f0;
             padding: 10px 20px;
             margin: 5px 0;
+            border-radius: 4px;
+            font-size: 13px;
             animation: slideIn 0.3s, slideOut 0.3s 2.7s;
+            transition: all 0.2s;
+        }
+        
+        .notification-clickable {
+            border-color: #0ff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+        }
+        
+        .notification-clickable:hover {
+            background: rgba(0, 255, 255, 0.2);
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.8);
+        }
+        
+        /* Notification type styles */
+        .notification-power {
+            border-color: #ff0;
+            color: #ff0;
+        }
+        
+        .notification-power.warning {
+            border-color: #ff8800;
+            color: #ff8800;
+            animation: pulse 1s infinite;
+        }
+        
+        .notification-attack {
+            border-color: #ff4444;
+            color: #ff4444;
+        }
+        
+        .notification-unitLost {
+            border-color: #ff6666;
+            color: #ffaaaa;
+        }
+        
+        .notification-buildingDestroyed {
+            border-color: #ff0000;
+            color: #ff6666;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
 
         @keyframes slideIn {
@@ -439,6 +486,12 @@
                 <option value="10">10 Units</option>
             </select>
         </div>
+        <div class="menu-option">
+            <label style="display: flex; align-items: center; gap: 10px;">
+                <input type="checkbox" id="useSprites" checked style="width: auto;">
+                <span>Use Sprites</span>
+            </label>
+        </div>
         <button class="menu-button" id="startGame">START GAME</button>
         <button class="menu-button" id="loadGameMenuBtn">LOAD GAME</button>
         <button class="menu-button" id="mapEditorBtn" style="background: #333; border-color: #0ff;">MAP EDITOR</button>
@@ -518,6 +571,8 @@
     <script src="js/pool.js"></script>
     <script src="js/effects.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/spritemanager.js"></script>
+    <script src="js/spriterenderer.js"></script>
     <script src="js/perlin.js"></script>
     <script src="js/spatialgrid.js"></script>
     <script src="js/map.js"></script>

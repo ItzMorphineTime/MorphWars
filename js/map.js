@@ -23,7 +23,7 @@ class GameMap {
             
             // Skip resource generation if loading from save
             if (!skipResourceGeneration) {
-                this.placeResourceNodes();
+        this.placeResourceNodes();
             }
         }
     }
@@ -324,8 +324,8 @@ class GameMap {
                     tile.building = null;
                     // Only unblock if terrain allows (rock/water should stay blocked)
                     if (tile.terrain !== 'rock' && tile.terrain !== 'water') {
-                        tile.blocked = false;
-                    }
+                    tile.blocked = false;
+                }
                 }
             }
         }
@@ -352,13 +352,13 @@ class GameMap {
         
         if (needsFullUpdate) {
             // Reset visible tiles to explored (only do this periodically)
-            for (const tile of this.tiles) {
-                if (!tile.fogOfWar[player.id]) {
-                    tile.fogOfWar[player.id] = FOG_UNEXPLORED;
-                } else if (tile.fogOfWar[player.id] === FOG_VISIBLE) {
-                    tile.fogOfWar[player.id] = FOG_EXPLORED;
-                }
+        for (const tile of this.tiles) {
+            if (!tile.fogOfWar[player.id]) {
+                tile.fogOfWar[player.id] = FOG_UNEXPLORED;
+            } else if (tile.fogOfWar[player.id] === FOG_VISIBLE) {
+                tile.fogOfWar[player.id] = FOG_EXPLORED;
             }
+        }
             this.lastFogUpdateTime = now;
         }
 

@@ -15,13 +15,18 @@ classDiagram
         +float y
         +Object stats
         +float hp
+        +int veterancy
+        +int kills
         +bool selected
-        +init(id, type, x, y, owner, stats)
+        +constructor(x, y, type, stats, owner)
         +update(deltaTime, game)
         +render(ctx, camera)
-        +takeDamage(amount)
+        +takeDamage(amount, game)
+        +heal(amount)
         +isAlive() bool
         +destroy(game)
+        +gainExperience()
+        +applyVeterancyBonus()
     }
 
     class Unit {
@@ -159,16 +164,21 @@ classDiagram
     class GameMap {
         +int width
         +int height
-        +Array~Array~ tiles
-        +Array~Object~ resources
-        +init(width, height)
+        +string mapType
+        +Array~Object~ tiles
+        +Array~Object~ resourceNodes
+        +HeightMapGenerator heightMapGenerator
+        +constructor(width, height, mapType, skipResourceGeneration, terrainSeed, customMapData)
         +getTile(x, y) Object
-        +isTileBlocked(x, y, size) bool
+        +isTileBlocked(x, y, size, isHarvester, isNaval) bool
         +isBuildingPlacementValid(x, y, width, height) bool
         +setBuilding(x, y, width, height, building)
         +clearBuilding(x, y, width, height)
         +findNearestResource(x, y) Object
-        +generateResources()
+        +update(deltaTime)
+        +loadCustomMap(data)
+        +generateTerrainWithHeightMap(seed)
+        +placeResourceNodes()
     }
 
     class Renderer {
@@ -219,10 +229,104 @@ classDiagram
         +showNotification(message)
     }
 
-    Game "1" --> "1" GameMap
-    Game "1" --> "1" Renderer
-    Game "1" --> "1" InputHandler
-    Game "1" --> "1" UIController
+    %% Pooling, Spatial, and Utilities
+    class ObjectPool {
+        +Function createFn
+        +Function resetFn
+        +Array pool
+        +Set active
+        +acquire() Object
+        +release(obj)
+        +releaseAll()
+        +getActiveCount() int
+        +getPoolSize() int
+    }
+
+    class EffectsPool {
+        +ObjectPool damageNumbers
+        +ObjectPool projectiles
+        +ObjectPool muzzleFlashes
+    }
+
+    class SpatialGrid {
+        +GameMap map
+        +int cellSize
+        +Map grid
+        +bool dirty
+        +buildGrid()
+        +getBlockedTilesInArea(centerX, centerY, radius) Set
+        +isTileBlocked(x, y, size, isHarvester, isNaval) bool
+    }
+
+    class SpriteManager {
+        +Map cache
+        +loadSprite(path) Promise
+        +loadSpriteSheet(path, config) Promise
+        +getSprite(path) Image
+        +getFrame(sheetPath, frameName) Object
+        +hasSprite(path) bool
+        +hasFailed(path) bool
+        +preloadSprites(spriteConfigs, onProgress) Promise
+        +clearCache()
+    }
+
+    class SpriteRenderer {
+        +SpriteManager spriteManager
+        +CanvasRenderingContext2D ctx
+        +renderUnit(unit, camera)
+        +renderBuilding(building, camera)
+        +renderTurret(building, turretConfig, baseX, baseY, baseW, baseH)
+        +getUnitAngle(unit, rotationConfig) float
+        +getAnimationState(unit) string
+    }
+
+    class PerlinNoise {
+        +Array permutation
+        +noise2D(x, y) float
+    }
+
+    class HeightMapGenerator {
+        +PerlinNoise perlin
+        +getHeight(x, y) float
+        +isValidLandTile(x, y, mapType) bool
+    }
+
+    class EffectsManager {
+        +Game game
+        +Array damageNumbers
+        +Array projectiles
+        +Array muzzleFlashes
+        +Array deathAnimations
+        +addDamageNumber(x, y, damage, isCritical)
+        +addProjectile(fromX, fromY, toX, toY, damageType)
+        +update(deltaTime)
+        +render(ctx, camera)
+    }
+
+    class SaveLoadManager {
+        +save(game, name) string
+        +load(name) Object
+        +listSaves() Array
+        +deleteSave(name)
+    }
+
+    class MapEditor {
+        +GameMap map
+        +string mode
+        +int brushSize
+        +activate()
+        +deactivate()
+        +handleInput(game)
+    }
+
+    GameMap "1" --> "0..1" HeightMapGenerator
+    HeightMapGenerator --> PerlinNoise
+    Game "1" --> "0..1" MapEditor
+    Game "1" --> "1" EffectsManager
+    MapEditor "1" --> "1" GameMap
+    Renderer ..> SpriteRenderer : uses
+    SpriteRenderer --> SpriteManager
+    EffectsManager ..> EffectsPool : optional pooling
 
     %% Utility Note
     note for Entity "Base class for all game entities (units and buildings)"
@@ -230,6 +334,8 @@ classDiagram
     note for Building "Handles production queues and unit spawning"
     note for AIController "AI state machine with economy, military, and attack states"
     note for GameMap "Tile-based map with fog of war and resource management"
+    note for ObjectPool "Object pooling for effects; see UNIT_TESTING_PLAN"
+    note for SpatialGrid "Spatial hashing for pathfinding; used by findPath"
 ```
 
 ## Class Relationships Summary
@@ -284,3 +390,29 @@ classDiagram
 - State machine: build, expand, attack, defend, mass_attack
 - Periodic behaviors: scouting, unit spreading, mass attacks
 - Difficulty levels control update intervals and thresholds
+
+### Utils and Globals
+
+- **`utils.js`** exposes global functions: `distance`, `distanceTiles`, `clamp`, `lerp`, `normalizeVector`, `pointInRect`, `rectIntersect`, `worldToTile`, `tileToWorld`, `canPlaceBuilding`, `findPath`, `findPathDirect`, `findPathHierarchical`, `findNearestValidTile`, `getCachedPath`, `cachePath`, `clearPathfindingCache`, `formatTime`, `getRandomInt`, `shuffle`, `validateEntity`, `safeCall`, `validateMapCoordinates`, `createFormation`.
+- **NotificationManager** and **Formation** are classes in `utils.js`.
+
+---
+
+## Testing
+
+Unit tests target pure logic and isolated modules first. See **[UNIT_TESTING_PLAN](UNIT_TESTING_PLAN.md)** for framework choice (Vitest), setup, and implementation plan.
+
+### Unit test targets (priority order)
+
+| Priority | Module | Targets |
+|----------|--------|---------|
+| **P0** | `utils.js` | `distance`, `clamp`, `lerp`, `pointInRect`, `rectIntersect`, `worldToTile`, `tileToWorld`, `canPlaceBuilding`, `getRandomInt`, `shuffle` |
+| **P1** | `utils.js` | `findPath`, `findPathDirect`, `findPathHierarchical`, `findNearestValidTile`, path cache helpers |
+| **P1** | `pool.js` | `ObjectPool` (acquire, release, releaseAll, counts) |
+| **P2** | `entity.js` | `Entity` (`takeDamage`, `heal`, `isAlive`, veterancy) |
+| **P2** | `spatialgrid.js` | `SpatialGrid` (`buildGrid`, `isTileBlocked`, `getBlockedTilesInArea`) |
+| **P2** | `map.js` | `GameMap` (`getTile`, `isTileBlocked`, `isValidSpawnTile`) |
+| **P3** | `unit.js`, `building.js`, `ai.js` | Movement, production, AI decision logic (with mocks) |
+| **P4** | `spritemanager.js`, `spriterenderer.js` | Loading, fallbacks, layout (mock canvas/Image) |
+
+Run tests via `npm test` (watch) or `npm run test:run` once Vitest is configured per the plan.

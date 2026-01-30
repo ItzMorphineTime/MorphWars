@@ -65,11 +65,25 @@ const UNIT_TYPES = {
         buildTime: 14,
         isHarvester: true,
         cargo: 0,
-        maxCargo: 700,
+        maxCargo: 500,
         armor: 'heavy',
         category: 'vehicle',
         tier: 1,
         size: 2,
+        sprite: {
+            path: 'assets/sprites/units/harvester.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
 
     // Infantry (T1)
@@ -88,6 +102,48 @@ const UNIT_TYPES = {
         category: 'infantry',
         tier: 1,
         size: 0.5,
+        // Sprite configuration (optional - fallback to colored rectangle if missing)
+        sprite: {
+            // Single sprite file
+            path: 'assets/sprites/units/rifleman.png',
+            size: { width: 32, height: 32 },
+            
+            // OR sprite sheet for animations
+            // sheet: {
+            //     path: 'assets/sprites/units/rifleman_sheet.png',
+            //     type: 'grid',
+            //     frameWidth: 32,
+            //     frameHeight: 32,
+            //     frames: {
+            //         idle: { x: 0, y: 0, count: 1 },
+            //         moving: { x: 1, y: 0, count: 3 },
+            //         attacking: { x: 4, y: 0, count: 3 },
+            //         dying: { x: 7, y: 0, count: 4 }
+            //     }
+            // },
+            
+            // Rotation settings
+            rotation: {
+                enabled: true,
+                useAngle: false, // Calculate from movement direction
+                snapToDirections: 0 // 0 = smooth rotation, 8 = 8-direction snap
+            },
+            
+            // Player color tinting
+            tinting: {
+                enabled: true,
+                method: 'multiply', // 'multiply', 'overlay', 'color', or 'screen'
+                intensity: 0.4 // 0-1, lower = more subtle
+            },
+            
+            // Animation speed (seconds per frame)
+            animation: {
+                idleSpeed: 0.2,
+                movingSpeed: 0.15,
+                attackingSpeed: 0.1,
+                dyingSpeed: 0.08
+            }
+        },
     },
     ROCKET_SOLDIER: {
         name: 'Rocket Soldier',
@@ -141,6 +197,21 @@ const UNIT_TYPES = {
 
     // Vehicles (T1)
     LIGHT_TANK: {
+        // Sprite configuration example
+        sprite: {
+            path: 'assets/sprites/units/light_tank.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
         name: 'Light Tank',
         cost: 700,
         hp: 300,
@@ -173,6 +244,20 @@ const UNIT_TYPES = {
         category: 'vehicle',
         tier: 2,
         size: 1.8,
+        sprite: {
+            path: 'assets/sprites/units/medium_tank.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
     APC: {
         name: 'APC',
@@ -192,6 +277,20 @@ const UNIT_TYPES = {
         isTransport: true,
         transportCapacity: 5, // Can carry up to 10 infantry units
         transportType: 'infantry', // Only infantry can embark
+        sprite: {
+            path: 'assets/sprites/units/apc.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
 
     // Vehicles (T3)
@@ -210,6 +309,20 @@ const UNIT_TYPES = {
         category: 'vehicle',
         tier: 3,
         size: 2,
+        sprite: {
+            path: 'assets/sprites/units/heavy_tank.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
     MAMMOTH_TANK: {
         name: 'Mammoth Tank',
@@ -228,6 +341,20 @@ const UNIT_TYPES = {
         tier: 3,
         size: 3,
         requiresTier: 3,
+        sprite: {
+            path: 'assets/sprites/units/mammoth_tank.png',
+            size: { width: 64, height: 64 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
     ARTILLERY: {
         name: 'Artillery',
@@ -244,6 +371,20 @@ const UNIT_TYPES = {
         category: 'vehicle',
         tier: 3,
         size: 1.5,
+        sprite: {
+            path: 'assets/sprites/units/artillery.png',
+            size: { width: 48, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
 
     // Air units
@@ -346,7 +487,7 @@ const BUILDING_TYPES = {
     HQ: {
         name: 'HQ',
         cost: 0,
-        hp: 1500,
+        hp: 3000,
         buildTime: 0,
         powerGenerate: 100,
         powerConsume: 0,
@@ -355,6 +496,15 @@ const BUILDING_TYPES = {
         height: 3,
         tier: 1,
         isHQ: true,
+        sprite: {
+            path: 'assets/sprites/buildings/hq.png',
+            size: { width: 96, height: 96 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
     },
     POWER_PLANT: {
         name: 'Power Plant',
@@ -367,6 +517,21 @@ const BUILDING_TYPES = {
         width: 2,
         height: 2,
         tier: 1,
+        // Sprite configuration (optional)
+        sprite: {
+            path: 'assets/sprites/buildings/power_plant.png',
+            size: { width: 64, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            },
+            // Construction animation (optional)
+            construction: {
+                frames: 4, // Number of construction progress frames
+                speed: 0.5 // Frame duration in seconds
+            }
+        },
     },
     REFINERY: {
         name: 'Refinery',
@@ -380,6 +545,15 @@ const BUILDING_TYPES = {
         height: 2,
         tier: 1,
         isRefinery: true,
+        sprite: {
+            path: 'assets/sprites/buildings/refinery.png',
+            size: { width: 96, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
     },
     BARRACKS: {
         name: 'Barracks',
@@ -393,6 +567,15 @@ const BUILDING_TYPES = {
         height: 2,
         tier: 1,
         produces: ['infantry'],
+        sprite: {
+            path: 'assets/sprites/buildings/barracks.png',
+            size: { width: 64, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
     },
     WAR_FACTORY: {
         name: 'War Factory',
@@ -406,6 +589,15 @@ const BUILDING_TYPES = {
         height: 3,
         tier: 1,
         produces: ['vehicle'],
+        sprite: {
+            path: 'assets/sprites/buildings/war_factory.png',
+            size: { width: 96, height: 96 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
     },
     TECH_CENTER: {
         name: 'Tech Center',
@@ -432,6 +624,15 @@ const BUILDING_TYPES = {
         height: 2,
         tier: 2,
         produces: ['air'],
+        sprite: {
+            path: 'assets/sprites/buildings/airfield.png',
+            size: { width: 96, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
     },
     ADVANCED_TECH: {
         name: 'Advanced Tech',
@@ -450,27 +651,59 @@ const BUILDING_TYPES = {
         name: 'Gun Turret',
         cost: 600,
         hp: 400,
+        // Sprite configuration with turret support
+        sprite: {
+            path: 'assets/sprites/buildings/gun_turret_base.png',
+            size: { width: 64, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            },
+            // Separate turret sprite that rotates
+            turret: {
+                path: 'assets/sprites/buildings/gun_turret_turret.png',
+                pivot: { x: 16, y: 16 }, // Rotation pivot point (center)
+                size: { width: 32, height: 32 }
+            }
+        },
         buildTime: 8,
         powerGenerate: 0,
         powerConsume: 20,
-        sight: 7,
+        sight: 8,
         width: 1,
         height: 1,
         tier: 1,
         damage: 25,
         attackSpeed: 1.0,
-        range: 7,
+        range: 8,
         damageType: 'shell',
         isDefense: true,
     },
     AA_TURRET: {
         name: 'AA Turret',
         cost: 800,
-        hp: 350,
+        hp: 200,
+        // Sprite configuration with turret support
+        sprite: {
+            path: 'assets/sprites/buildings/aa_turret_base.png',
+            size: { width: 64, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            },
+            // Separate turret sprite that rotates
+            turret: {
+                path: 'assets/sprites/buildings/aa_turret_turret.png',
+                pivot: { x: 16, y: 16 }, // Rotation pivot point (center)
+                size: { width: 32, height: 32 }
+            }
+        },
         buildTime: 9,
         powerGenerate: 0,
         powerConsume: 25,
-        sight: 8,
+        sight: 10,
         width: 1,
         height: 1,
         tier: 2,
@@ -486,7 +719,7 @@ const BUILDING_TYPES = {
         hp: 800,
         buildTime: 40,
         powerGenerate: 0,
-        powerConsume: 100,
+        powerConsume: 150,
         sight: 6,
         width: 2,
         height: 2,
@@ -526,6 +759,15 @@ const BUILDING_TYPES = {
         name: 'Port',
         cost: 3000,
         hp: 1000,
+        sprite: {
+            path: 'assets/sprites/buildings/port.png',
+            size: { width: 96, height: 64 },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.3
+            }
+        },
         buildTime: 30,
         powerGenerate: 0,
         powerConsume: 60,
@@ -537,6 +779,24 @@ const BUILDING_TYPES = {
         requiresCoastline: true, // Must be placed adjacent to water
         allowsUnitsOnTop: true, // Naval units can move through/on port
     },
+    TESLA_COIL: {
+        name: 'Tesla Coil',
+        cost: 2500,
+        hp: 200,
+        buildTime: 20,
+        powerGenerate: 0,
+        powerConsume: 200, // Very high power consumption
+        sight: 8,
+        width: 1,
+        height: 1,
+        tier: 2,
+        requiresTier: 2, // Requires Advanced Tech
+        damage: 300, // Very high damage
+        attackSpeed: 5.0, // Long cooldown (5 seconds)
+        range: 6,
+        damageType: 'tesla', // Unique damage type
+        isDefense: true,
+    },
 };
 
 // Damage multipliers
@@ -546,6 +806,7 @@ const DAMAGE_MULTIPLIERS = {
     shell: { none: 0.5, light: 1.0, medium: 1.2, heavy: 1.0 },
     explosive: { none: 1.5, light: 1.2, medium: 1.3, heavy: 1.0 },
     aa: { none: 0.3, light: 0.5, medium: 0.3, heavy: 0.2 },
+    tesla: { none: 1.5, light: 1.8, medium: 1.5, heavy: 1.2 }, // Tesla is effective against all armor types
 };
 
 // Special power definitions
@@ -577,8 +838,8 @@ const SPECIAL_POWERS = {
         name: 'Ion Cannon',
         cost: 0,
         cooldown: 300000, // 300 seconds
-        damage: 1000,
-        radius: 5,
+        damage: 800,
+        radius: 6,
         requiresBuilding: 'SUPERWEAPON',
         chargeTime: 5000,
     },
@@ -636,7 +897,7 @@ const PATHFINDING_THROTTLE = {
 // Frustum culling configuration
 const FRUSTUM_CULLING = {
     ENABLED: true,                  // Enable/disable frustum culling
-    RENDER_MARGIN: 250,             // Render margin in pixels for smooth scrolling (entities outside viewport but within margin are still rendered)
+    RENDER_MARGIN: 500,             // Render margin in pixels for smooth scrolling (entities outside viewport but within margin are still rendered)
     ENABLE_FOG_CHECK: true,          // Also check fog of war visibility (can disable for performance testing)
     CACHE_VISIBILITY: true,          // Cache visibility calculations per frame (reduces redundant checks)
 };
@@ -673,9 +934,15 @@ const AI_BEHAVIOR = {
 // Pathfinding constants
 const PATHFINDING = {
     MAX_ITERATIONS: 10000,            // Maximum pathfinding iterations before giving up
-    CARDINAL_ONLY: true,            // Only use cardinal directions (no diagonals) for performance
+    CARDINAL_ONLY: false,            // Only use cardinal directions (no diagonals) for performance
     HIERARCHICAL_THRESHOLD: 20,      // Use hierarchical pathfinding for paths longer than this (tiles)
     WAYPOINT_DISTANCE: 15,           // Distance between waypoints in hierarchical pathfinding
+};
+
+// Sprite rotation settings (global for all units)
+const SPRITE_ROTATION = {
+    DEFAULT_TURN_SPEED: 0.015,         // Radians per frame for smooth rotation (higher = faster)
+    SMOOTH_ROTATION: true,           // Enable smooth rotation interpolation
 };
 
 // Formation constants
@@ -780,7 +1047,7 @@ const MAP_GENERATION = {
 
 // Resource constants
 const RESOURCE_CONFIG = {
-    HARVESTING_RATE: 5,                 // Resources harvested per update (was 10)
+    HARVESTING_RATE: 1,                 // Resources harvested per update (was 10)
     REGENERATION_RATE: 100,             // Resources regenerated per 30s
     REGENERATION_INTERVAL: 30000,       // Regeneration interval in ms
 
@@ -791,14 +1058,14 @@ const RESOURCE_CONFIG = {
             color: '#FFA500',           // Orange
             minValue: 5000,
             maxValue: 10000,
-            baseValue: 1,               // Credits per resource unit
+            baseValue: 2,               // Credits per resource unit
         },
         GEMS: {
             name: 'Gems',
             color: '#00FFFF',           // Cyan
             minValue: 3000,
             maxValue: 6000,
-            baseValue: 2,               // Credits per resource unit (2x value)
+            baseValue: 5,               // Credits per resource unit (2x value)
         },
     },
 
@@ -840,6 +1107,19 @@ const EFFECTS_CONFIG = {
         MAX_SIZE: 20,                    // Maximum size in pixels
         COLOR: '#ff0000',                 // Red explosion
     },
+    TESLA_EFFECT: {
+        LIFETIME: 200,                   // 0.2 seconds (short, snappy lightning)
+        SEGMENTS: 8,                     // Number of segments in lightning bolt
+        COLOR: '#00ffff',                 // Cyan/blue lightning
+        GLOW_COLOR: '#ffffff',            // White core
+        GLOW_SIZE: 8,                    // Glow radius at impact
+    },
+    ION_CANNON: {
+        CHARGE_COLOR: '#00ffff',         // Cyan charging effect
+        EXPLOSION_COLOR: '#0088ff',      // Blue explosion
+        CORE_COLOR: '#ffffff',           // White core
+        MIN_DAMAGE_MULTIPLIER: 0.5,      // 50% damage at edge (100% at center)
+    },
 };
 
 // Camera movement constants
@@ -860,4 +1140,29 @@ const POOLING_CONFIG = {
     PROJECTILE_POOL_SIZE: 15,            // Initial pool size for projectiles
     MUZZLE_FLASH_POOL_SIZE: 10,          // Initial pool size for muzzle flashes
     DEATH_ANIMATION_POOL_SIZE: 10,       // Initial pool size for death animations
+};
+
+// Notification system configuration
+const NOTIFICATION_CONFIG = {
+    cooldown: {
+        power: 10000,        // 10 seconds for power warnings
+        attack: 3000,        // 3 seconds for attack notifications
+        unitLost: 2000,      // 2 seconds for unit lost
+        buildingDestroyed: 3000, // 3 seconds for building destroyed
+        default: 500         // 500ms for general notifications
+    },
+    duration: {
+        power: 5000,         // 5 seconds
+        attack: 4000,        // 4 seconds
+        unitLost: 4000,     // 4 seconds
+        buildingDestroyed: 5000, // 5 seconds
+        default: 3000        // 3 seconds
+    },
+    maxGrouped: 5,          // Max units/buildings to show in grouped notification
+    groupWindow: 2000        // 2 seconds window to group similar notifications
+};
+
+// Game settings (persisted in localStorage)
+const GAME_SETTINGS = {
+    USE_SPRITES: true,      // Enable/disable sprite rendering (default: enabled)
 };

@@ -173,11 +173,28 @@ class Player {
         return true;
     }
 
-    updatePowerCooldowns(deltaTime) {
+    updatePowerCooldowns(deltaTime, buildings = null) {
         for (const powerType in this.specialPowers) {
             const power = this.specialPowers[powerType];
             if (power.cooldown > 0) {
-                power.cooldown = Math.max(0, power.cooldown - deltaTime);
+                let cooldownReduction = deltaTime;
+                
+                // Ion Cannon cooldown reduction: each operational Ion Cannon building reduces cooldown
+                if (powerType === 'superweapon' && buildings) {
+                    const ionCannonCount = buildings.filter(b => 
+                        b.owner === this && 
+                        b.type === 'SUPERWEAPON' && 
+                        b.isAlive() && 
+                        b.isOperational &&
+                        !b.isUnderConstruction
+                    ).length;
+                    
+                    // Each Ion Cannon reduces cooldown by 25% (so 4 buildings = 100% faster = 2x speed)
+                    const reductionMultiplier = 1 + (ionCannonCount * 0.25);
+                    cooldownReduction = deltaTime * reductionMultiplier;
+                }
+                
+                power.cooldown = Math.max(0, power.cooldown - cooldownReduction);
             }
         }
     }

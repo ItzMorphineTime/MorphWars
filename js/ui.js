@@ -244,6 +244,27 @@ class UIController {
             // Remove any inline background to use CSS default (green to yellow gradient)
             this.powerFillEl.style.background = '';
         }
+        
+        // Track power ratio for notifications (ratio = generated / consumed)
+        const powerRatio = player.getPowerRatio();
+        const lastRatio = this.lastPowerRatio;
+        this.lastPowerRatio = powerRatio;
+        
+        // Show power warning notifications
+        if (notificationManager) {
+            // Always notify if power is out (ratio < 1)
+            if (powerRatio < 1) {
+                // Check if we should notify (either first time or significant change)
+                const shouldNotify = lastRatio === undefined || 
+                    (lastRatio >= 1 && powerRatio < 1) || // Just ran out of power
+                    (powerRatio < 0.5 && (lastRatio === undefined || lastRatio >= 0.5)) || // Just dropped to critical
+                    (powerRatio < 0.75 && (lastRatio === undefined || lastRatio >= 0.75)); // Just dropped below 75%
+                
+                if (shouldNotify) {
+                    notificationManager.showPowerWarning(powerRatio);
+                }
+            }
+        }
     }
 
     updateSelection() {
@@ -930,6 +951,14 @@ class UIController {
         let html = '<div class="sidebar-header" style="margin-bottom: 15px; font-size: 18px;">⚙️ GAME SETTINGS</div>';
         html += '<div style="display: flex; flex-direction: column; gap: 10px;">';
         
+        // Sprite toggle
+        html += '<div style="padding: 10px; background: #1a1a1a; border: 1px solid #0f0; display: flex; align-items: center; justify-content: space-between;">';
+        html += '<label style="color: #0f0; cursor: pointer; display: flex; align-items: center; gap: 10px;">';
+        html += `<input type="checkbox" id="settingsUseSprites" ${this.game.settings.useSprites ? 'checked' : ''} style="width: auto; cursor: pointer;" onchange="game.setUseSprites(this.checked);">`;
+        html += '<span>Use Sprites</span>';
+        html += '</label>';
+        html += '</div>';
+        
         // Save Game button
         html += '<button class="menu-button" onclick="const name = prompt(\'Enter save name:\', \'Save \' + new Date().toLocaleString()); if(name) { game.saveLoadManager.saveGame(name); showNotification(\'Game saved!\'); const settingsModal = document.getElementById(\'settingsModal\'); if(settingsModal) { settingsModal.remove(); } game.isPaused = false; }">💾 SAVE GAME</button>';
         
@@ -1068,7 +1097,6 @@ class UIController {
         html += '<div><strong>Middle Mouse Drag:</strong> Pan camera</div>';
         html += '<div><strong>Mouse Edge Scrolling:</strong> Move camera when mouse near screen edge</div>';
         html += '<div><strong>Click Minimap:</strong> Jump camera to clicked location</div>';
-        html += '<div><strong>Camera Following:</strong> Camera smoothly follows selected units</div>';
         html += '</div>';
         
         html += '<div style="margin-bottom: 15px;"><strong style="color: #0f0;">GAME MECHANICS</strong></div>';

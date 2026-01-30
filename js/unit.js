@@ -78,6 +78,16 @@ class Unit extends Entity {
         this.isSubmarine = stats.isSubmarine || false;
         this.stealth = stats.stealth || false;
         this.stealthDetected = false; // Whether submarine has been detected
+        
+        // Animation state tracking for sprites
+        this.animationState = 'idle'; // idle, moving, attacking, dying
+        this.animationFrame = 0; // Current frame index in animation
+        this.animationTime = 0; // Accumulated time for current frame
+        this.lastAnimationState = 'idle'; // Previous state (for state change detection)
+        
+        // Sprite rotation tracking
+        this.spriteAngle = Math.PI / 2; // Current sprite angle (default: facing right/downward offset)
+        this.targetSpriteAngle = Math.PI / 2; // Target angle for smooth rotation
     }
 
     moveTo(x, y, game) {
@@ -228,6 +238,9 @@ class Unit extends Entity {
             }
         }
 
+        // Update animation state
+        this.updateAnimation(deltaTime);
+        
         // Update attack cooldown
         if (this.attackCooldown > 0) {
             this.attackCooldown -= deltaTime;
@@ -778,6 +791,8 @@ class Unit extends Entity {
         if (canAttackAir) {
             for (const unit of game.units) {
                 if (!unit.isAirplane || unit.owner === this.owner || !unit.isAlive()) continue;
+                // Skip embarked units (they're inside a transport)
+                if (unit.transportedBy) continue;
                 const dist = distance(this.x, this.y, unit.x, unit.y);
                 const range = (this.stats.range || 1) * TILE_SIZE;
                 if (dist <= range && dist < nearestDist) {
@@ -790,6 +805,8 @@ class Unit extends Entity {
         // Check units (exclude airplanes unless this unit can attack air)
         for (const unit of game.units) {
             if (unit.owner === this.owner || !unit.isAlive()) continue;
+            // Skip embarked units (they're inside a transport)
+            if (unit.transportedBy) continue;
             // Skip airplanes unless this unit can attack them
             if (unit.isAirplane && !canAttackAir) continue;
             
@@ -1436,9 +1453,8 @@ class Unit extends Entity {
 
         const radius = this.strikeRadius * TILE_SIZE;
 
-        // Damage units and buildings in radius
+        // Damage units and buildings in radius (damages friendly units and buildings too)
         for (const unit of game.units) {
-            if (unit.owner === this.owner) continue;
             if (!unit.isAlive()) continue;
 
             const dist = distance(this.strikeX, this.strikeY, unit.x, unit.y);
@@ -1452,7 +1468,6 @@ class Unit extends Entity {
         }
 
         for (const building of game.buildings) {
-            if (building.owner === this.owner) continue;
             if (!building.isAlive()) continue;
 
             const dist = distance(this.strikeX, this.strikeY, building.x, building.y);
@@ -1678,7 +1693,7 @@ class Unit extends Entity {
     // Override takeDamage to auto-disembark when transport is destroyed
     takeDamage(damage, game = null) {
         const wasAlive = this.isAlive();
-        const destroyed = super.takeDamage(damage);
+        const destroyed = super.takeDamage(damage, game);
         
         // If transport was destroyed, disembark all units
         if (wasAlive && destroyed && this.isTransport && this.embarkedUnits.length > 0 && game) {
@@ -1688,6 +1703,79 @@ class Unit extends Entity {
         return destroyed;
     }
 
+    /**
+     * Update animation state and frame timing
+     */
+    updateAnimation(deltaTime) {
+        // Determine current animation state based on unit behavior
+        let newState = 'idle';
+        
+        if (this.hp <= 0) {
+            newState = 'dying';
+        } else if (this.targetEnemy && this.attackCooldown > 0) {
+            newState = 'attacking';
+        } else if (this.path && this.path.length > 0) {
+            newState = 'moving';
+        }
+        
+        // State changed - reset animation
+        if (newState !== this.lastAnimationState) {
+            this.animationState = newState;
+            this.animationFrame = 0;
+            this.animationTime = 0;
+            this.lastAnimationState = newState;
+        }
+        
+        // Update animation frame timing
+        const spriteConfig = this.stats?.sprite;
+        if (spriteConfig && spriteConfig.sheet) {
+            // Get animation speed for current state
+            const animationConfig = spriteConfig.animation || {};
+            let frameDuration = 0.15; // Default 0.15s per frame
+            
+            if (this.animationState === 'idle' && animationConfig.idleSpeed) {
+                frameDuration = animationConfig.idleSpeed;
+            } else if (this.animationState === 'moving' && animationConfig.movingSpeed) {
+                frameDuration = animationConfig.movingSpeed;
+            } else if (this.animationState === 'attacking' && animationConfig.attackingSpeed) {
+                frameDuration = animationConfig.attackingSpeed;
+            } else if (this.animationState === 'dying' && animationConfig.dyingSpeed) {
+                frameDuration = animationConfig.dyingSpeed || 0.08;
+            }
+            
+            // Accumulate time
+            this.animationTime += deltaTime;
+            
+            // Advance frame when duration exceeded
+            if (this.animationTime >= frameDuration) {
+                this.animationFrame++;
+                this.animationTime = 0;
+                
+                // Get max frames for current state
+                const frameDef = spriteConfig.sheet.frames[this.animationState];
+                if (frameDef) {
+                    const maxFrames = frameDef.count || 1;
+                    
+                    // Loop animation (except dying which is one-shot)
+                    if (this.animationState === 'dying') {
+                        // Dying animation stops at last frame
+                        if (this.animationFrame >= maxFrames) {
+                            this.animationFrame = maxFrames - 1;
+                        }
+                    } else {
+                        // Loop other animations
+                        if (this.animationFrame >= maxFrames) {
+                            this.animationFrame = 0;
+                        }
+                    }
+                } else {
+                    // No frame definition for this state - reset
+                    this.animationFrame = 0;
+                }
+            }
+        }
+    }
+    
     // Update transported units position
     updateTransportedUnits() {
         if (!this.isTransport) return;

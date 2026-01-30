@@ -17,12 +17,39 @@ class Entity {
         this.kills = 0;
     }
 
-    takeDamage(damage) {
+    takeDamage(damage, game = null) {
+        const wasAlive = this.isAlive();
+        const wasHealthy = this.hp > this.maxHp * 0.5; // Consider "healthy" if above 50% HP
+        
         this.hp -= damage;
         if (this.hp <= 0) {
             this.hp = 0;
+            
+            // Notify if entity was destroyed and belongs to human player
+            if (wasAlive && game && notificationManager && this.owner && !this.owner.isAI) {
+                if (this instanceof Unit) {
+                    notificationManager.showUnitLost(this);
+                } else if (this instanceof Building) {
+                    notificationManager.showBuildingDestroyed(this);
+                }
+            }
+            
             return true; // Entity destroyed
         }
+        
+        // Notify if entity is being attacked (first time taking damage or significant damage)
+        if (game && notificationManager && this.owner && !this.owner.isAI) {
+            // Only notify if entity was healthy before (to avoid spam on already damaged entities)
+            // Or if this is the first significant hit (bringing HP below 50%)
+            if (wasHealthy && this.hp <= this.maxHp * 0.5) {
+                if (this instanceof Unit) {
+                    notificationManager.showUnitAttacked(this);
+                } else if (this instanceof Building) {
+                    notificationManager.showBuildingAttacked(this);
+                }
+            }
+        }
+        
         return false;
     }
 

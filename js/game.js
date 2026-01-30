@@ -14,7 +14,7 @@ class Game {
 
         this.selectedEntities = [];
         this.camera = { x: 0, y: 0 };
-        this.cameraTarget = null; // For smooth camera following
+        this.cameraTarget = null; // Reserved for future use (currently unused)
         this.cameraPresets = new Map(); // F1-F4 for saved camera positions
 
         this.placingBuilding = null;
@@ -52,6 +52,11 @@ class Game {
 
         // Airplanes for special powers (air drop, airstrike, recon sweep)
         this.airplanes = []; // Array of airplane objects
+        
+        // Game settings (load from localStorage or use defaults)
+        this.settings = {
+            useSprites: this.loadSetting('useSprites', GAME_SETTINGS.USE_SPRITES)
+        };
 
         this.renderer = new Renderer(this, this.canvas, this.minimapCanvas);
         this.input = new InputHandler(this, this.canvas);
@@ -65,6 +70,9 @@ class Game {
         
         // Visual effects system
         this.effects = new EffectsManager(this);
+        
+        // Initialize Notification Manager
+        notificationManager = new NotificationManager(this);
     }
 
     init(mapSize, mapType, aiCount, aiDifficulty, startingCredits = 5000, startingInfantry = 3, customMapName = null) {
@@ -266,7 +274,7 @@ class Game {
             if (!player) continue;
             safeCall(player.updatePower, player, this.buildings);
             safeCall(player.updateTechTree, player, this.buildings);
-            safeCall(player.updatePowerCooldowns, player, deltaTime);
+            safeCall(player.updatePowerCooldowns, player, deltaTime, this.buildings);
         }
 
         // Airplanes are now regular units, updated in update() method
@@ -298,23 +306,6 @@ class Game {
         // Update UI
         if (this.ui) {
             safeCall(this.ui.update, this.ui);
-        }
-
-        // Smooth camera following for selected units
-        if (this.cameraTarget) {
-            const targetX = this.cameraTarget.x - this.canvas.width / 2;
-            const targetY = this.cameraTarget.y - this.canvas.height / 2;
-            
-            // Smooth interpolation using configurable speed
-            const followSpeed = CAMERA_CONFIG.SMOOTH_FOLLOW_SPEED;
-            this.camera.x = lerp(this.camera.x, targetX, followSpeed);
-            this.camera.y = lerp(this.camera.y, targetY, followSpeed);
-            
-            // Stop following if close enough
-            const dist = distance(this.camera.x, this.camera.y, targetX, targetY);
-            if (dist < 5) {
-                this.cameraTarget = null;
-            }
         }
 
         // Constrain camera
@@ -652,20 +643,31 @@ class Game {
     useSuperweapon(worldX, worldY, config) {
         const centerTile = worldToTile(worldX, worldY);
         const radius = config.radius;
+        const maxRadius = radius * TILE_SIZE;
 
         showNotification('Ion Cannon charging...');
+
+        // Add visual effect (charging phase)
+        if (this.effects) {
+            this.effects.addIonCannonEffect(worldX, worldY, radius, config.chargeTime);
+        }
 
         // Delay for charging animation
         setTimeout(() => {
             showNotification('Ion Cannon strike!');
 
-            // Massive damage in radius
+            // Massive damage in radius with falloff (damages friendly units and buildings too)
             for (const unit of this.units) {
-                if (unit.owner === this.humanPlayer) continue;
+                if (!unit.isAlive()) continue;
 
                 const dist = distance(worldX, worldY, unit.x, unit.y);
-                if (dist <= radius * TILE_SIZE) {
-                    const destroyed = unit.takeDamage(config.damage, this);
+                if (dist <= maxRadius) {
+                    // Calculate damage falloff: 100% at center, 50% at edge
+                    const distRatio = dist / maxRadius; // 0 = center, 1 = edge
+                    const damageMultiplier = 1 - (distRatio * 0.5); // 1.0 at center, 0.5 at edge
+                    const actualDamage = Math.floor(config.damage * damageMultiplier);
+                    
+                    const destroyed = unit.takeDamage(actualDamage, this);
                     if (destroyed) {
                         const tile = worldToTile(unit.x, unit.y);
                         this.map.clearUnit(tile.x, tile.y);
@@ -674,11 +676,16 @@ class Game {
             }
 
             for (const building of this.buildings) {
-                if (building.owner === this.humanPlayer) continue;
+                if (!building.isAlive()) continue;
 
                 const dist = distance(worldX, worldY, building.x, building.y);
-                if (dist <= radius * TILE_SIZE) {
-                    const destroyed = building.takeDamage(config.damage, this);
+                if (dist <= maxRadius) {
+                    // Calculate damage falloff: 100% at center, 50% at edge
+                    const distRatio = dist / maxRadius; // 0 = center, 1 = edge
+                    const damageMultiplier = 1 - (distRatio * 0.5); // 1.0 at center, 0.5 at edge
+                    const actualDamage = Math.floor(config.damage * damageMultiplier);
+                    
+                    const destroyed = building.takeDamage(actualDamage, this);
                     if (destroyed) {
                         this.map.clearBuilding(building.tileX, building.tileY, building.stats.width, building.stats.height);
                     }
@@ -814,5 +821,31 @@ class Game {
             unit.formationId = null;
             unit.formationIndex = null;
         }
+    }
+    
+    // Settings management
+    loadSetting(key, defaultValue) {
+        try {
+            const stored = localStorage.getItem(`game_setting_${key}`);
+            if (stored !== null) {
+                return JSON.parse(stored);
+            }
+        } catch (e) {
+            console.warn(`Failed to load setting ${key}:`, e);
+        }
+        return defaultValue;
+    }
+    
+    saveSetting(key, value) {
+        try {
+            localStorage.setItem(`game_setting_${key}`, JSON.stringify(value));
+        } catch (e) {
+            console.warn(`Failed to save setting ${key}:`, e);
+        }
+    }
+    
+    setUseSprites(enabled) {
+        this.settings.useSprites = enabled;
+        this.saveSetting('useSprites', enabled);
     }
 }

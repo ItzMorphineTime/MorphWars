@@ -1,0 +1,14 @@
+{
+  "name": "morph-wars",
+  "version": "1.0.0",
+  "description": "Morph Wars - RTS game built with vanilla JavaScript and HTML5 Canvas",
+  "private": true,
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

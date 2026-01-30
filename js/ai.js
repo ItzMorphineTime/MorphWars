@@ -106,19 +106,19 @@ class AIController {
         switch(phase) {
             case 0:
                 // Phase 0: Economy management
-                this.manageEconomy(owned);
+        this.manageEconomy(owned);
                 break;
             case 1:
                 // Phase 1: Production management
-                this.manageProduction(owned);
+        this.manageProduction(owned);
                 break;
             case 2:
                 // Phase 2: Military management
-                this.manageMilitary(owned);
+        this.manageMilitary(owned);
                 break;
             case 3:
                 // Phase 3: Defense management
-                this.manageDefense(owned);
+        this.manageDefense(owned);
                 break;
         }
 
@@ -154,7 +154,7 @@ class AIController {
         const harvesters = owned.units.filter(u => u.isHarvester).length;
         const refineries = owned.buildings.filter(b => b.stats.isRefinery && b.isAlive()).length;
         const powerPlants = owned.buildings.filter(b => b.stats.powerGenerate > 0 && b.isAlive()).length;
-        
+
         // Calculate power ratio
         const powerRatio = this.player.getPowerRatio();
         const powerDeficit = this.player.powerConsumed - this.player.powerGenerated;
@@ -193,7 +193,7 @@ class AIController {
             
             // Only build more if we don't have enough active harvesters
             if (idleHarvesters < 1 && harvesters < targetHarvesters) {
-                this.tryTrainUnit('HARVESTER', owned);
+            this.tryTrainUnit('HARVESTER', owned);
             }
         }
 

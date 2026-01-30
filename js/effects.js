@@ -7,6 +7,8 @@ class EffectsManager {
         this.projectiles = []; // Array of {x, y, targetX, targetY, speed, color, lifetime}
         this.muzzleFlashes = []; // Array of {x, y, angle, lifetime, age}
         this.deathAnimations = []; // Array of {x, y, type, lifetime, age}
+        this.teslaEffects = []; // Array of {x, y, targetX, targetY, lifetime, age, segments}
+        this.ionCannonEffects = []; // Array of {x, y, radius, lifetime, age, chargeTime, phase}
         
         // Object pooling for effects (optional - can be enabled via config)
         this.usePooling = POOLING_CONFIG.ENABLE_EFFECTS_POOLING;
@@ -50,7 +52,8 @@ class EffectsManager {
             shell: '#ff8800',
             rocket: '#ff0000',
             explosive: '#ff6600',
-            aa: '#00ffff'
+            aa: '#00ffff',
+            tesla: '#00ffff' // Tesla uses cyan/blue color
         };
         const config = EFFECTS_CONFIG.PROJECTILE;
         
@@ -128,6 +131,56 @@ class EffectsManager {
         this.deathAnimations.push(anim);
     }
 
+    addTeslaEffect(fromX, fromY, toX, toY) {
+        // Create a lightning bolt effect with multiple segments
+        const segments = [];
+        const numSegments = 8;
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        
+        // Create jagged lightning path
+        for (let i = 0; i <= numSegments; i++) {
+            const t = i / numSegments;
+            const baseX = fromX + dx * t;
+            const baseY = fromY + dy * t;
+            
+            // Add random offset for jagged effect
+            const offsetX = (Math.random() - 0.5) * 15;
+            const offsetY = (Math.random() - 0.5) * 15;
+            
+            segments.push({
+                x: baseX + offsetX,
+                y: baseY + offsetY
+            });
+        }
+        
+        const effect = {
+            x: fromX,
+            y: fromY,
+            targetX: toX,
+            targetY: toY,
+            segments: segments,
+            lifetime: 200, // Short duration for lightning effect
+            age: 0
+        };
+        
+        this.teslaEffects.push(effect);
+    }
+
+    addIonCannonEffect(x, y, radius, chargeTime) {
+        const effect = {
+            x: x,
+            y: y,
+            radius: radius * TILE_SIZE, // Convert to world coordinates
+            lifetime: chargeTime + 1000, // Charge time + 1 second for explosion
+            age: 0,
+            chargeTime: chargeTime,
+            phase: 'charging' // 'charging' or 'explosion'
+        };
+        
+        this.ionCannonEffects.push(effect);
+    }
+
     update(deltaTime) {
         // Update damage numbers
         const damageConfig = EFFECTS_CONFIG.DAMAGE_NUMBER;
@@ -197,6 +250,31 @@ class EffectsManager {
                 this.deathAnimations.splice(i, 1);
             }
         }
+
+        // Update Tesla effects
+        for (let i = this.teslaEffects.length - 1; i >= 0; i--) {
+            const effect = this.teslaEffects[i];
+            effect.age += deltaTime;
+            
+            if (effect.age >= effect.lifetime) {
+                this.teslaEffects.splice(i, 1);
+            }
+        }
+
+        // Update Ion Cannon effects
+        for (let i = this.ionCannonEffects.length - 1; i >= 0; i--) {
+            const effect = this.ionCannonEffects[i];
+            effect.age += deltaTime;
+            
+            // Transition from charging to explosion phase
+            if (effect.phase === 'charging' && effect.age >= effect.chargeTime) {
+                effect.phase = 'explosion';
+            }
+            
+            if (effect.age >= effect.lifetime) {
+                this.ionCannonEffects.splice(i, 1);
+            }
+        }
     }
 
     render(ctx, camera) {
@@ -263,6 +341,139 @@ class EffectsManager {
                 ctx.fill();
             } else if (anim.type === 'building') {
                 ctx.fillRect(anim.x - size, anim.y - size, size * 2, size * 2);
+            }
+            
+            ctx.restore();
+        }
+
+        // Render Tesla Coil lightning effects
+        for (const tesla of this.teslaEffects) {
+            const alpha = 1 - (tesla.age / tesla.lifetime);
+            const flicker = Math.random() * 0.3 + 0.7; // Random flicker for lightning effect
+            
+            ctx.save();
+            ctx.globalAlpha = alpha * flicker;
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 3;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffff';
+            
+            // Draw jagged lightning path
+            ctx.beginPath();
+            ctx.moveTo(tesla.segments[0].x, tesla.segments[0].y);
+            for (let i = 1; i < tesla.segments.length; i++) {
+                ctx.lineTo(tesla.segments[i].x, tesla.segments[i].y);
+            }
+            ctx.stroke();
+            
+            // Add bright core
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            
+            // Add glow effect at impact point
+            const lastSegment = tesla.segments[tesla.segments.length - 1];
+            ctx.globalAlpha = alpha * 0.5;
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.arc(lastSegment.x, lastSegment.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        // Render Ion Cannon effects
+        const ionConfig = EFFECTS_CONFIG.ION_CANNON;
+        for (const ion of this.ionCannonEffects) {
+            const progress = ion.age / ion.lifetime;
+            const chargeProgress = ion.age / ion.chargeTime;
+            
+            ctx.save();
+            
+            if (ion.phase === 'charging') {
+                // Charging phase: growing circle with pulsing effect
+                const pulse = Math.sin(chargeProgress * Math.PI * 4) * 0.3 + 0.7; // Pulsing effect
+                const currentRadius = (ion.radius * 0.3) * chargeProgress * pulse;
+                
+                // Outer glow
+                ctx.globalAlpha = (1 - chargeProgress * 0.5) * 0.6;
+                ctx.fillStyle = '#00ffff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#00ffff';
+                ctx.beginPath();
+                ctx.arc(ion.x, ion.y, currentRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner core
+                ctx.globalAlpha = (1 - chargeProgress * 0.3) * 0.9;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(ion.x, ion.y, currentRadius * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Energy particles (sparkles)
+                ctx.globalAlpha = 0.8;
+                ctx.fillStyle = '#00ffff';
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2 + chargeProgress * Math.PI * 2;
+                    const dist = currentRadius * 0.8;
+                    const px = ion.x + Math.cos(angle) * dist;
+                    const py = ion.y + Math.sin(angle) * dist;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else {
+                // Explosion phase: expanding blast with shockwave
+                const explosionProgress = (ion.age - ion.chargeTime) / (ion.lifetime - ion.chargeTime);
+                const currentRadius = ion.radius * explosionProgress;
+                const maxRadius = ion.radius;
+                
+                // Outer shockwave
+                ctx.globalAlpha = (1 - explosionProgress) * 0.8;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 8;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#00ffff';
+                ctx.beginPath();
+                ctx.arc(ion.x, ion.y, currentRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Main explosion
+                const explosionAlpha = Math.min(1, (1 - explosionProgress * 0.7));
+                ctx.globalAlpha = explosionAlpha;
+                const gradient = ctx.createRadialGradient(ion.x, ion.y, 0, ion.x, ion.y, currentRadius);
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(0.3, '#00ffff');
+                gradient.addColorStop(0.6, '#0088ff');
+                gradient.addColorStop(1, 'rgba(0, 136, 255, 0)');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(ion.x, ion.y, currentRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner bright core
+                ctx.globalAlpha = explosionAlpha * 0.9;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(ion.x, ion.y, currentRadius * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Energy rings
+                for (let ring = 0; ring < 3; ring++) {
+                    const ringProgress = (explosionProgress + ring * 0.2) % 1;
+                    const ringRadius = currentRadius * ringProgress;
+                    ctx.globalAlpha = (1 - ringProgress) * 0.5;
+                    ctx.strokeStyle = '#00ffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(ion.x, ion.y, ringRadius, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
             }
             
             ctx.restore();

@@ -141,18 +141,14 @@ class InputHandler {
         if (!this.isOverSidebar(e)) {
             if (e.clientX < edgeScrollMargin) {
                 this.game.camera.x -= scrollSpeed;
-                this.game.cameraTarget = null; // Cancel camera following
             } else if (e.clientX > window.innerWidth - edgeScrollMargin) {
                 this.game.camera.x += scrollSpeed;
-                this.game.cameraTarget = null;
             }
             
             if (e.clientY < edgeScrollMargin) {
                 this.game.camera.y -= scrollSpeed;
-                this.game.cameraTarget = null;
             } else if (e.clientY > window.innerHeight - edgeScrollMargin) {
                 this.game.camera.y += scrollSpeed;
-                this.game.cameraTarget = null;
             }
             
             this.clampCamera();
@@ -162,7 +158,6 @@ class InputHandler {
         if (e.buttons === 4) {
             this.game.camera.x -= e.movementX * CAMERA_CONFIG.MIDDLE_MOUSE_PAN_SPEED;
             this.game.camera.y -= e.movementY * CAMERA_CONFIG.MIDDLE_MOUSE_PAN_SPEED;
-            this.game.cameraTarget = null; // Cancel camera following when manually panning
             // Clamp camera to map bounds
             this.clampCamera();
             return;
@@ -288,7 +283,6 @@ class InputHandler {
             this.game.camera.x = mouseWorldX - (this.mouseX / zoomFactor);
             this.game.camera.y = mouseWorldY - (this.mouseY / zoomFactor);
 
-            this.game.cameraTarget = null; // Cancel camera following when zooming
             this.clampCamera();
         }
     }
@@ -499,7 +493,7 @@ class InputHandler {
                 console.error('Game or controlGroups not initialized!');
                 return;
             }
-            
+            console.log('selectedEntities', this.game);
             if (this.game.selectedEntities.length > 0) {
                 // Assign selected entities to control group
                 this.game.controlGroups.set(groupNum, [...this.game.selectedEntities]);
@@ -653,22 +647,11 @@ class InputHandler {
                 this.lastClickTime = 0;
                 this.lastClickEntity = null;
                 
-                // Enable camera following for selected units
-                if (sameTypeUnits.length > 0) {
-                    const centerX = sameTypeUnits.reduce((sum, u) => sum + u.x, 0) / sameTypeUnits.length;
-                    const centerY = sameTypeUnits.reduce((sum, u) => sum + u.y, 0) / sameTypeUnits.length;
-                    this.game.cameraTarget = { x: centerX, y: centerY };
-                }
             } else {
                 // Single click - normal selection (skip transported units)
                 if (entity && entity.owner === this.game.humanPlayer && !(entity instanceof Unit && entity.transportedBy)) {
-                    entity.selected = true;
-                    this.game.selectedEntities.push(entity);
-                    
-                    // Enable camera following for single unit
-                    if (entity instanceof Unit) {
-                        this.game.cameraTarget = { x: entity.x, y: entity.y };
-                    }
+                entity.selected = true;
+                this.game.selectedEntities.push(entity);
                 }
                 
                 // Update double-click tracking
@@ -740,7 +723,7 @@ class InputHandler {
         // Check if clicking on resource node
         const clickTile = worldToTile(this.mouseWorldX, this.mouseWorldY);
         const resourceNode = this.game.map.getResourceNode(clickTile.x, clickTile.y);
-        
+
         // Handle embark/disembark commands
         const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit);
         const hasTransportSelected = selectedUnits.some(u => u.isTransport);
@@ -907,7 +890,7 @@ class InputHandler {
             }
             
             // Set rally point for buildings
-            for (const entity of this.game.selectedEntities) {
+        for (const entity of this.game.selectedEntities) {
                 if (entity instanceof Building) {
                     entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
                 }
@@ -984,9 +967,9 @@ class InputHandler {
 
         // Set rally point for buildings (if not already set above)
         if (selectedUnits.length <= 1 || selectedUnits.length > 20) {
-            for (const entity of this.game.selectedEntities) {
-                if (entity instanceof Building) {
-                    entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
+        for (const entity of this.game.selectedEntities) {
+            if (entity instanceof Building) {
+                entity.setRallyPoint(this.mouseWorldX, this.mouseWorldY);
                 }
             }
         }

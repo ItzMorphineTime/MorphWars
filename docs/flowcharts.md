@@ -11,6 +11,7 @@ This document contains comprehensive flowcharts showing the logic flow for major
 6. [AI Decision Making](#ai-decision-making)
 7. [Pathfinding Algorithm](#pathfinding-algorithm-a)
 8. [Building Production System](#building-production-system)
+9. [Unit Testing & Test Run Flow](#unit-testing--test-run-flow)
 
 ---
 
@@ -421,6 +422,56 @@ flowchart TD
 
 ---
 
+## Unit Testing & Test Run Flow
+
+See **[UNIT_TESTING_PLAN](UNIT_TESTING_PLAN.md)** for framework choice (Vitest), setup, and implementation plan.
+
+```mermaid
+flowchart TD
+    Start([npm test / npm run test:run]) --> Vitest[Vitest]
+    Vitest --> LoadConfig[Load vitest.config.js]
+    LoadConfig --> Glob[Match **/*.test.js, **/*.spec.js]
+    Glob --> RunSpecs[Run Test Suites]
+
+    RunSpecs --> P0[P0: utils distance, clamp, lerp, pointInRect, etc.]
+    P0 --> P1[P1: findPath, ObjectPool]
+    P1 --> P2[P2: Entity, SpatialGrid, GameMap]
+    P2 --> P3[P3: Unit, Building, AI with mocks]
+    P3 --> P4[P4: SpriteManager, SpriteRenderer with mocks]
+
+    P4 --> Report{All Pass?}
+    Report -->|Yes| Success([Exit 0])
+    Report -->|No| Fail([Exit 1, show failures])
+```
+
+### What to Unit Test vs Integrate
+
+```mermaid
+flowchart LR
+    subgraph Unit Tests
+        U1[Pure utils: distance, clamp, lerp]
+        U2[Pathfinding on minimal map]
+        U3[ObjectPool acquire/release]
+        U4[Entity takeDamage, heal]
+        U5[SpatialGrid, GameMap helpers]
+    end
+
+    subgraph Integration / Manual
+        I1[Full game loop]
+        I2[AI vs AI scenarios]
+        I3[Save / Load round-trip]
+        I4[Sprite loading & rendering]
+    end
+
+    Unit Tests --> Fast[Fast, deterministic]
+    Integration --> Slow[Slower, manual or E2E]
+```
+
+- **Unit tests**: Isolated modules, mocked DOM/globals where needed. Run on every change via `npm test`.
+- **Integration / manual**: Full game, AI behavior, save/load, visuals. Validate before release; optional E2E later.
+
+---
+
 ## System Integration Notes
 
 ### Performance Optimizations
@@ -441,3 +492,8 @@ flowchart TD
 - **Harvester States**: harvesting (going to resource) ↔ returning (going to refinery)
 - **Unit Stances**: hold_position, defensive, aggressive
 - **Fog States**: unexplored (0) → explored (1) ↔ visible (2)
+
+### Testing
+- **Unit tests**: Vitest; see [UNIT_TESTING_PLAN](UNIT_TESTING_PLAN.md) and [Unit Testing & Test Run Flow](#unit-testing--test-run-flow).
+- **Priority order**: P0 (utils) → P1 (pathfinding, pool) → P2 (entity, spatial, map) → P3 (unit, building, AI) → P4 (sprites).
+- **Commands**: `npm test` (watch), `npm run test:run` (single run), `npm run test:coverage` (coverage).

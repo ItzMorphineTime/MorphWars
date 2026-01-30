@@ -18,6 +18,21 @@ class Renderer {
         // Frustum culling: visibility cache per frame
         this.visibilityCache = new Map(); // Cache entity visibility per frame
         this.currentFrameId = 0;
+        
+        // Sprite system (use game's instances if available, otherwise create new)
+        if (typeof SpriteManager !== 'undefined') {
+            this.spriteManager = new SpriteManager();
+        } else {
+            console.warn('SpriteManager not loaded, sprite system disabled');
+            this.spriteManager = null;
+        }
+        
+        if (typeof SpriteRenderer !== 'undefined' && this.spriteManager) {
+            this.spriteRenderer = new SpriteRenderer(this.spriteManager, this.ctx);
+        } else {
+            console.warn('SpriteRenderer not loaded, sprite system disabled');
+            this.spriteRenderer = null;
+        }
 
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
@@ -168,22 +183,31 @@ class Renderer {
             const w = building.stats.width * TILE_SIZE;
             const h = building.stats.height * TILE_SIZE;
 
-            // Building body - blend building type color with player color
-            const buildingTypeColor = BUILDING_TYPE_COLORS[building.type] || building.owner.color;
-            const blendedColor = this.blendColors(buildingTypeColor, building.owner.color, 0.7);
-            this.ctx.fillStyle = blendedColor;
-            this.ctx.fillRect(px, py, w, h);
+            // Try to render with sprite first (if sprite system is available and enabled)
+            let spriteRendered = false;
+            if (this.spriteRenderer && this.game.settings.useSprites) {
+                spriteRendered = this.spriteRenderer.renderBuilding(building, this.game.camera);
+            }
+            
+            // If sprite rendering failed or not available, use fallback rendering
+            if (!spriteRendered) {
+                // Building body - blend building type color with player color
+                const buildingTypeColor = BUILDING_TYPE_COLORS[building.type] || building.owner.color;
+                const blendedColor = this.blendColors(buildingTypeColor, building.owner.color, 0.7);
+                this.ctx.fillStyle = blendedColor;
+                this.ctx.fillRect(px, py, w, h);
 
-            // Border - use player color
+                // Building name (only show in fallback mode)
+                this.ctx.fillStyle = '#000';
+                this.ctx.font = '10px monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText(building.stats.name, px + w / 2, py + h / 2);
+            }
+
+            // Border - use player color (always render border)
             this.ctx.strokeStyle = building.selected ? '#fff' : building.owner.color;
             this.ctx.lineWidth = building.selected ? 3 : 2;
             this.ctx.strokeRect(px, py, w, h);
-
-            // Building name
-            this.ctx.fillStyle = '#000';
-            this.ctx.font = '10px monospace';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText(building.stats.name, px + w / 2, py + h / 2);
 
             // Health bar
             this.renderHealthBar(px, py - 5, w, building.getHealthPercent());
@@ -230,41 +254,62 @@ class Renderer {
             // Don't render units that are being transported
             if (unit.transportedBy) continue;
 
-            const size = (unit.stats.size || 1) * 15;
-
-            // Determine unit color based on type (stronger type color blend)
-            let unitColor = unit.owner.color;
-            if (unit.isHarvester) {
-                unitColor = this.blendColors(UNIT_TYPE_COLORS.harvester, unit.owner.color, 0.7);
-            } else if (unit.isBuilder) {
-                unitColor = this.blendColors(UNIT_TYPE_COLORS.builder, unit.owner.color, 0.7);
-            } else if (unit.stats.category === 'infantry') {
-                unitColor = this.blendColors(UNIT_TYPE_COLORS.infantry, unit.owner.color, 0.7);
-            } else if (unit.stats.category === 'air') {
-                unitColor = this.blendColors(UNIT_TYPE_COLORS.air, unit.owner.color, 0.7);
-            } else if (unit.stats.category === 'naval') {
-                unitColor = this.blendColors('#0066cc', unit.owner.color, 0.7);
-            } else if (unit.stats.category === 'vehicle') {
-                unitColor = this.blendColors(UNIT_TYPE_COLORS.vehicle, unit.owner.color, 0.7);
+            // Try to render with sprite first (if sprite system is available and enabled)
+            let spriteRendered = false;
+            if (this.spriteRenderer && this.game.settings.useSprites) {
+                spriteRendered = this.spriteRenderer.renderUnit(unit, this.game.camera);
             }
             
-            // Submarine stealth - only render if detected or owned by player
-            if (unit.isSubmarine && unit.stealth && !unit.stealthDetected && unit.owner !== this.game.humanPlayer) {
-                continue; // Don't render undetected enemy submarines
+            // If sprite rendering failed or not available, use fallback rendering
+            if (!spriteRendered) {
+                this.renderUnitFallback(unit);
+            } else {
+                // Sprite rendered successfully, but we still need to render overlays
+                const size = (unit.stats.size || 1) * 15;
+                this.renderUnitOverlays(unit, size);
             }
+        }
+    }
+    
+    /**
+     * Fallback rendering for units (original rectangle rendering)
+     */
+    renderUnitFallback(unit) {
+        const size = (unit.stats.size || 1) * 15;
 
-            // Unit body
-            if (unit.stats.category === 'infantry') {
-                this.ctx.fillStyle = unitColor;
-                this.ctx.beginPath();
-                this.ctx.arc(unit.x, unit.y, size / 2, 0, Math.PI * 2);
-                this.ctx.fill();
+        // Determine unit color based on type (stronger type color blend)
+        let unitColor = unit.owner.color;
+        if (unit.isHarvester) {
+            unitColor = this.blendColors(UNIT_TYPE_COLORS.harvester, unit.owner.color, 0.7);
+        } else if (unit.isBuilder) {
+            unitColor = this.blendColors(UNIT_TYPE_COLORS.builder, unit.owner.color, 0.7);
+        } else if (unit.stats.category === 'infantry') {
+            unitColor = this.blendColors(UNIT_TYPE_COLORS.infantry, unit.owner.color, 0.7);
+        } else if (unit.stats.category === 'air') {
+            unitColor = this.blendColors(UNIT_TYPE_COLORS.air, unit.owner.color, 0.7);
+        } else if (unit.stats.category === 'naval') {
+            unitColor = this.blendColors('#0066cc', unit.owner.color, 0.7);
+        } else if (unit.stats.category === 'vehicle') {
+            unitColor = this.blendColors(UNIT_TYPE_COLORS.vehicle, unit.owner.color, 0.7);
+        }
+        
+        // Submarine stealth - only render if detected or owned by player
+        if (unit.isSubmarine && unit.stealth && !unit.stealthDetected && unit.owner !== this.game.humanPlayer) {
+            return; // Don't render undetected enemy submarines
+        }
 
-                // Player color border
-                this.ctx.strokeStyle = unit.owner.color;
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke();
-            } else if (unit.stats.category === 'air') {
+        // Unit body
+        if (unit.stats.category === 'infantry') {
+            this.ctx.fillStyle = unitColor;
+            this.ctx.beginPath();
+            this.ctx.arc(unit.x, unit.y, size / 2, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Player color border
+            this.ctx.strokeStyle = unit.owner.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+        } else if (unit.stats.category === 'air') {
                 this.ctx.fillStyle = unitColor;
                 this.ctx.save();
                 this.ctx.translate(unit.x, unit.y);
@@ -304,103 +349,139 @@ class Renderer {
                 // Player color border
                 this.ctx.strokeStyle = unit.owner.color;
                 this.ctx.lineWidth = 2;
-                this.ctx.stroke();
-                this.ctx.restore();
-            } else if (unit.stats.category === 'naval') {
-                // Naval units - draw as elongated rectangle (ship shape)
-                this.ctx.fillStyle = unitColor;
-                const navalWidth = size * 1.5;
-                const navalHeight = size * 0.8;
-                this.ctx.fillRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
-                
-                // Submarine indicator (periscope)
-                if (unit.isSubmarine) {
-                    this.ctx.fillStyle = '#888';
-                    this.ctx.fillRect(unit.x - 2, unit.y - size - 3, 4, 6);
-                }
-                
-                // Player color border
-                this.ctx.strokeStyle = unit.owner.color;
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
-            } else {
-                this.ctx.fillStyle = unitColor;
-                this.ctx.fillRect(unit.x - size / 2, unit.y - size / 2, size, size);
-
-                // Player color border
-                this.ctx.strokeStyle = unit.owner.color;
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeRect(unit.x - size / 2, unit.y - size / 2, size, size);
-            }
-
-            // Enhanced selection indicator
-            if (unit.selected) {
-                // Outer glow
-                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                this.ctx.lineWidth = 3;
-                this.ctx.beginPath();
-                this.ctx.arc(unit.x, unit.y, size + 3, 0, Math.PI * 2);
-                this.ctx.stroke();
-                
-                // Inner selection circle
-                this.ctx.strokeStyle = unit.owner.color;
-                this.ctx.lineWidth = 2;
-                this.ctx.beginPath();
-                this.ctx.arc(unit.x, unit.y, size + 1, 0, Math.PI * 2);
-                this.ctx.stroke();
-                
-                // Selection indicator at top
-                this.ctx.fillStyle = unit.owner.color;
-                this.ctx.fillRect(unit.x - 4, unit.y - size - 8, 8, 4);
-            }
-
-            // Health bar
-            this.renderHealthBar(unit.x - size, unit.y - size - 8, size * 2, unit.getHealthPercent());
-
-            // Veterancy stars
-            if (unit.veterancy > 0) {
-                this.ctx.fillStyle = '#ff0';
-                this.ctx.font = '10px monospace';
-                this.ctx.textAlign = 'center';
-                this.ctx.fillText('★'.repeat(unit.veterancy), unit.x, unit.y + size + 12);
-            }
-
-            // Transport capacity indicator
-            if (unit.isTransport) {
-                const embarkedCount = unit.getEmbarkedCount();
-                const capacity = unit.getTransportCapacity();
-                if (embarkedCount > 0) {
-                    this.ctx.fillStyle = '#0f0';
-                    this.ctx.font = '10px monospace';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillText(`${embarkedCount}/${capacity}`, unit.x, unit.y - size - 12);
-                }
+            this.ctx.stroke();
+            this.ctx.restore();
+        } else if (unit.stats.category === 'naval') {
+            // Naval units - draw as elongated rectangle (ship shape)
+            this.ctx.fillStyle = unitColor;
+            const navalWidth = size * 1.5;
+            const navalHeight = size * 0.8;
+            this.ctx.fillRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
+            
+            // Submarine indicator (periscope)
+            if (unit.isSubmarine) {
+                this.ctx.fillStyle = '#888';
+                this.ctx.fillRect(unit.x - 2, unit.y - size - 3, 4, 6);
             }
             
-            // Harvester cargo
-            if (unit.isHarvester && unit.cargo > 0) {
-                this.ctx.fillStyle = '#d4af37';
-                this.ctx.font = '8px monospace';
+            // Player color border
+            this.ctx.strokeStyle = unit.owner.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(unit.x - navalWidth / 2, unit.y - navalHeight / 2, navalWidth, navalHeight);
+        } else {
+            this.ctx.fillStyle = unitColor;
+            this.ctx.fillRect(unit.x - size / 2, unit.y - size / 2, size, size);
+
+            // Player color border
+            this.ctx.strokeStyle = unit.owner.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(unit.x - size / 2, unit.y - size / 2, size, size);
+        }
+
+        // Enhanced selection indicator
+        if (unit.selected) {
+            // Outer glow
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(unit.x, unit.y, size + 3, 0, Math.PI * 2);
+            this.ctx.stroke();
+            
+            // Inner selection circle
+            this.ctx.strokeStyle = unit.owner.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(unit.x, unit.y, size + 1, 0, Math.PI * 2);
+            this.ctx.stroke();
+            
+            // Selection indicator at top
+            this.ctx.fillStyle = unit.owner.color;
+            this.ctx.fillRect(unit.x - 4, unit.y - size - 8, 8, 4);
+        }
+
+        // Health bar
+        this.renderHealthBar(unit.x - size, unit.y - size - 8, size * 2, unit.getHealthPercent());
+        
+        // Veterancy stars and other overlays
+        this.renderUnitOverlays(unit, size);
+    }
+    
+    /**
+     * Render unit overlays (health bar, selection, veterancy, etc.)
+     * Called after sprite or fallback rendering
+     */
+    renderUnitOverlays(unit, size = null) {
+        if (size === null) {
+            size = (unit.stats.size || 1) * 15;
+        }
+
+        // Selection indicator (for units with sprites)
+        if (unit.selected) {
+            // Outer glow
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(unit.x, unit.y, size + 3, 0, Math.PI * 2);
+            this.ctx.stroke();
+            
+            // Inner selection circle
+            this.ctx.strokeStyle = unit.owner.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(unit.x, unit.y, size + 1, 0, Math.PI * 2);
+            this.ctx.stroke();
+            
+            // Selection indicator at top
+            this.ctx.fillStyle = unit.owner.color;
+            this.ctx.fillRect(unit.x - 4, unit.y - size - 8, 8, 4);
+        }
+
+        // Health bar
+        this.renderHealthBar(unit.x - size, unit.y - size - 8, size * 2, unit.getHealthPercent());
+
+        // Veterancy stars
+        if (unit.veterancy > 0) {
+            this.ctx.fillStyle = '#ff0';
+            this.ctx.font = '10px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('★'.repeat(unit.veterancy), unit.x, unit.y + size + 12);
+        }
+
+        // Transport capacity indicator
+        if (unit.isTransport) {
+            const embarkedCount = unit.getEmbarkedCount();
+            const capacity = unit.getTransportCapacity();
+            if (embarkedCount > 0) {
+                this.ctx.fillStyle = '#0f0';
+                this.ctx.font = '10px monospace';
                 this.ctx.textAlign = 'center';
-                this.ctx.fillText(Math.floor(unit.cargo), unit.x, unit.y + size + 20);
+                this.ctx.fillText(`${embarkedCount}/${capacity}`, unit.x, unit.y - size - 12);
+            }
+        }
+        
+        // Harvester cargo
+        if (unit.isHarvester && unit.cargo > 0) {
+            this.ctx.fillStyle = '#d4af37';
+            this.ctx.font = '8px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(Math.floor(unit.cargo), unit.x, unit.y + size + 20);
+        }
+
+        // Path visualization (for selected units)
+        if (unit.selected && unit.path && unit.path.length > 0) {
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            this.ctx.setLineDash([3, 3]);
+            this.ctx.beginPath();
+            this.ctx.moveTo(unit.x, unit.y);
+
+            for (let i = unit.pathIndex; i < unit.path.length; i++) {
+                const node = unit.path[i];
+                const pos = tileToWorld(node.x, node.y);
+                this.ctx.lineTo(pos.x, pos.y);
             }
 
-            // Path visualization (for selected units)
-            if (unit.selected && unit.path && unit.path.length > 0) {
-                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-                this.ctx.setLineDash([3, 3]);
-                this.ctx.beginPath();
-                this.ctx.moveTo(unit.x, unit.y);
-
-                for (let i = unit.pathIndex; i < unit.path.length; i++) {
-                    const node = unit.path[i];
-                    const pos = tileToWorld(node.x, node.y);
-                    this.ctx.lineTo(pos.x, pos.y);
-                }
-
-                this.ctx.stroke();
-                this.ctx.setLineDash([]);
-            }
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
         }
     }
 
@@ -556,8 +637,11 @@ class Renderer {
             b.isOperational
         );
 
-        if (!hasRadarDome) {
-            // Show static/disabled minimap
+        // Check if player has sufficient power
+        const hasPower = this.game.humanPlayer && this.game.humanPlayer.getPowerRatio() >= 1;
+
+        if (!hasRadarDome || !hasPower) {
+            // Show static/disabled minimap (no radar or insufficient power)
             ctx.fillStyle = '#1a1a1a';
             ctx.fillRect(0, 0, w, h);
             ctx.fillStyle = '#333';

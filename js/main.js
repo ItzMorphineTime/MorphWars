@@ -10,6 +10,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadGameMenuBtn = document.getElementById('loadGameMenuBtn');
     const gameMenu = document.getElementById('gameMenu');
     const gameContainer = document.getElementById('gameContainer');
+    
+    // Load sprite setting from localStorage and set checkbox
+    const useSpritesCheckbox = document.getElementById('useSprites');
+    if (useSpritesCheckbox) {
+        try {
+            const stored = localStorage.getItem('game_setting_useSprites');
+            if (stored !== null) {
+                useSpritesCheckbox.checked = JSON.parse(stored);
+            }
+        } catch (e) {
+            // Use default (checked)
+        }
+    }
 
     function startNewGame() {
         const aiCount = parseInt(document.getElementById('aiCount').value);
@@ -18,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const mapType = document.getElementById('mapType').value;
         const startingCredits = parseInt(document.getElementById('startingCredits').value);
         const startingInfantry = parseInt(document.getElementById('startingInfantry').value);
+        const useSprites = document.getElementById('useSprites').checked;
         
         let customMapName = null;
         if (mapType === 'custom') {
@@ -35,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize game
         game = new Game();
         window.game = game; // Make accessible globally
+        game.setUseSprites(useSprites); // Apply sprite setting
         game.init(mapSize, mapType, aiCount, aiDifficulty, startingCredits, startingInfantry, customMapName);
 
         showNotification('Build your base and destroy the enemy!');

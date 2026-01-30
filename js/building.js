@@ -20,6 +20,13 @@ class Building extends Entity {
         this.constructionProgress = 0;
         this.constructionTime = stats.buildTime || 0;
         this.isOperational = !this.isUnderConstruction;  // Operational when construction complete
+        
+        // Animation state tracking for sprites
+        this.animationState = 'idle'; // idle, building (construction)
+        this.animationFrame = 0; // Current frame index
+        this.animationTime = 0; // Accumulated time for current frame
+        this.targetEnemy = null; // For turrets - target to rotate toward
+        this.lastAttackDirection = 0; // Last attack angle (for turrets)
     }
 
     update(deltaTime, game) {
@@ -123,11 +130,18 @@ class Building extends Entity {
 
             // Check power - significantly slow down if low power
             const powerRatio = this.owner.getPowerRatio();
-            const productionSpeed = powerRatio >= 1 ? 1 : powerRatio * 0.25; // 25% speed when low power
+            // Production still works with no power, just very slowly (10% speed minimum)
+            const productionSpeed = powerRatio >= 1 ? 1 : Math.max(0.1, powerRatio * 0.25); // 25% speed when low power, minimum 10%
 
             this.productionProgress += (deltaTime / 1000) * productionSpeed;
 
             const buildTime = this.currentProduction.stats.buildTime;
+            if (!buildTime || buildTime <= 0) {
+                // Invalid buildTime - skip this item
+                this.currentProduction = null;
+                this.productionProgress = 0;
+                return;
+            }
             if (this.productionProgress >= buildTime) {
                 this.spawnUnit(this.currentProduction, game);
                 this.currentProduction = null;
@@ -259,25 +273,48 @@ class Building extends Entity {
     }
 
     findSpawnLocation(game) {
-        // Check 1-tile perimeter around building footprint
+        // Get the size of the unit being produced (default to 1 if not specified)
+        // Round up to handle fractional sizes (e.g., 0.5 -> 1 for spawn location calculation)
+        const unitSizeRaw = this.currentProduction?.stats?.size || 1;
+        const unitSize = Math.ceil(unitSizeRaw); // Round up for spawn location checks
+        
+        // Check perimeter around building footprint, accounting for unit size
         const tiles = [];
 
-        // Top and bottom edges
-        for (let x = this.tileX - 1; x <= this.tileX + this.stats.width; x++) {
-            tiles.push({ x, y: this.tileY - 1 }); // Top
-            tiles.push({ x, y: this.tileY + this.stats.height }); // Bottom
+        // Top and bottom edges (extend outward by unit size)
+        for (let x = this.tileX - unitSize; x <= this.tileX + this.stats.width + unitSize - 1; x++) {
+            for (let offset = 1; offset <= unitSize; offset++) {
+                tiles.push({ x, y: this.tileY - offset }); // Top
+                tiles.push({ x, y: this.tileY + this.stats.height + offset - 1 }); // Bottom
+            }
         }
 
-        // Left and right edges (excluding corners already added)
-        for (let y = this.tileY; y < this.tileY + this.stats.height; y++) {
-            tiles.push({ x: this.tileX - 1, y }); // Left
-            tiles.push({ x: this.tileX + this.stats.width, y }); // Right
+        // Left and right edges (extend outward by unit size)
+        for (let y = this.tileY - unitSize; y < this.tileY + this.stats.height + unitSize; y++) {
+            for (let offset = 1; offset <= unitSize; offset++) {
+                tiles.push({ x: this.tileX - offset, y }); // Left
+                tiles.push({ x: this.tileX + this.stats.width + offset - 1, y }); // Right
+            }
         }
 
-        // Check each perimeter tile
+        // Check each perimeter tile - ensure entire unit footprint fits
+        // For fractional sizes, only check the single tile (units with size < 1 fit in one tile)
+        const checkSize = unitSizeRaw < 1 ? 1 : unitSize;
         for (const pos of tiles) {
-            const tile = game.map.getTile(pos.x, pos.y);
-            if (tile && !tile.blocked && !tile.unit) {
+            // Check if unit can fit at this position
+            let canFit = true;
+            for (let dy = 0; dy < checkSize && canFit; dy++) {
+                for (let dx = 0; dx < checkSize && canFit; dx++) {
+                    const checkX = pos.x + dx;
+                    const checkY = pos.y + dy;
+                    const tile = game.map.getTile(checkX, checkY);
+                    if (!tile || tile.blocked || tile.unit || tile.building) {
+                        canFit = false;
+                    }
+                }
+            }
+            
+            if (canFit) {
                 return { x: pos.x, y: pos.y };
             }
         }
@@ -368,10 +405,35 @@ class Building extends Entity {
             return;
         }
 
+        // Check power for Tesla Coil and AA Turrets - they can't attack without power
+        const isPowerDependent = this.type === 'TESLA_COIL' || this.type === 'AA_TURRET';
+        if (isPowerDependent) {
+            const powerRatio = this.owner.getPowerRatio();
+            if (powerRatio < 1) {
+                // Insufficient power - can't attack
+                this.targetEnemy = null;
+                return;
+            }
+        }
+
         const target = this.findTarget(game);
         if (target) {
+            this.targetEnemy = target; // Store target for turret rotation
+            // Calculate attack direction for turret rotation
+            const dx = target.x - this.x;
+            const dy = target.y - this.y;
+            this.lastAttackDirection = Math.atan2(dy, dx);
             this.performAttack(target, game);
             this.lastAttack = now;
+        } else {
+            // No target - clear target enemy
+            this.targetEnemy = null;
+        }
+        
+        // Clear target if it died or moved out of range
+        if (this.targetEnemy && (!this.targetEnemy.isAlive() || 
+            distance(this.x, this.y, this.targetEnemy.x, this.targetEnemy.y) > (this.stats.range || 5) * TILE_SIZE)) {
+            this.targetEnemy = null;
         }
     }
 
@@ -385,7 +447,8 @@ class Building extends Entity {
 
         for (const unit of game.units) {
             if (unit.owner === this.owner || !unit.isAlive()) continue;
-
+            // Skip embarked units (they're inside a transport)
+            if (unit.transportedBy) continue;
             // Skip airplanes unless this building is an AA turret
             if (unit.isAirplane && !canAttackAir) continue;
 
@@ -421,6 +484,25 @@ class Building extends Entity {
 
         damage = Math.floor(damage);
 
+        // Add visual effects for combat feedback (projectiles, muzzle flash, or Tesla effect)
+        if (game.effects) {
+            // Calculate attack position (center of building)
+            const attackX = this.x;
+            const attackY = this.y;
+            
+            // Special effect for Tesla Coil
+            if (damageType === 'tesla') {
+                game.effects.addTeslaEffect(attackX, attackY, target.x, target.y);
+            } else {
+                // Regular projectile for other turrets
+                game.effects.addProjectile(attackX, attackY, target.x, target.y, damageType);
+                
+                // Add muzzle flash at building center
+                const angle = Math.atan2(target.y - attackY, target.x - attackX);
+                game.effects.addMuzzleFlash(attackX, attackY, angle);
+            }
+        }
+
         const destroyed = target.takeDamage(damage, game);
 
         if (destroyed) {
@@ -445,7 +527,9 @@ class Building extends Entity {
 
     getProductionProgress() {
         if (!this.currentProduction) return 0;
-        return this.productionProgress / this.currentProduction.stats.buildTime;
+        const buildTime = this.currentProduction.stats.buildTime;
+        if (!buildTime || buildTime <= 0) return 0; // Safety check
+        return this.productionProgress / buildTime;
     }
 
     spawnHarvester(game) {
@@ -482,6 +566,41 @@ class Building extends Entity {
             if (dist <= repairRange) {
                 unit.heal(repairRate * (deltaTime / 1000));
                 break; // Repair one unit at a time
+            }
+        }
+    }
+    
+    /**
+     * Update animation state and frame timing
+     */
+    updateAnimation(deltaTime) {
+        // Determine current animation state
+        let newState = 'idle';
+        
+        if (this.isUnderConstruction) {
+            newState = 'building';
+        }
+        
+        // State changed - reset animation
+        if (newState !== this.animationState) {
+            this.animationState = newState;
+            this.animationFrame = 0;
+            this.animationTime = 0;
+        }
+        
+        // Update animation frame timing for construction
+        if (this.isUnderConstruction) {
+            const spriteConfig = this.stats?.sprite;
+            if (spriteConfig && spriteConfig.construction) {
+                const constructionConfig = spriteConfig.construction;
+                const maxFrames = constructionConfig.frames || 4;
+                
+                // Calculate frame based on construction progress
+                const progress = this.getConstructionPercent();
+                this.animationFrame = Math.floor(progress * maxFrames);
+                if (this.animationFrame >= maxFrames) {
+                    this.animationFrame = maxFrames - 1;
+                }
             }
         }
     }

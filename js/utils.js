@@ -379,14 +379,20 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester =
                                 break;
                             }
                             
-                            // Allow harvesters to pass through other harvesters (handled in unit movement)
+                            // For pathfinding, be more lenient - only block on buildings that don't allow units on top
+                            // Units can push through other units during pathfinding (handled in movement)
+                            // Allow harvesters to pass through other harvesters
                             // Allow naval units to pass through other naval units
                             const hasBlockingUnit = checkTile.unit && checkTile.unit.size >= size && 
                                 !(checkTile.unit.isHarvester && isHarvester) && 
                                 !(checkTile.unit.isNaval && isNaval);
-                            if (checkTile.blocked || (checkTile.building && !checkTile.building.stats.allowsUnitsOnTop) || hasBlockingUnit) {
+                            
+                            // Only block on terrain obstacles and buildings that don't allow units
+                            // Don't block on units during pathfinding (they can move)
+                            if (checkTile.blocked || (checkTile.building && !checkTile.building.stats.allowsUnitsOnTop)) {
                                 canFit = false;
                             }
+                            // Note: We don't block on units during pathfinding - they can move out of the way
                         }
                     }
                     if (!canFit) {
@@ -473,35 +479,226 @@ function formatTime(ms) {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
-// Notification deduplication - prevent spam
-let lastNotification = null;
-let lastNotificationTime = 0;
-const NOTIFICATION_COOLDOWN = 500; // 500ms cooldown between identical notifications
-
-function showNotification(message, duration = 3000) {
-    const now = Date.now();
-    
-    // Check if this is a duplicate notification within cooldown period
-    if (message === lastNotification && (now - lastNotificationTime) < NOTIFICATION_COOLDOWN) {
-        return; // Skip duplicate notification
+// Enhanced Notification System
+class NotificationManager {
+    constructor(game) {
+        this.game = game;
+        this.container = document.getElementById('notifications');
+        this.activeNotifications = [];
+        
+        // Per-type throttling to prevent spam
+        this.lastNotificationByType = new Map();
+        this.groupedNotifications = new Map(); // Group similar notifications
+        
+        // Configuration (from constants)
+        this.config = typeof NOTIFICATION_CONFIG !== 'undefined' ? NOTIFICATION_CONFIG : {
+            cooldown: { power: 10000, attack: 3000, unitLost: 2000, buildingDestroyed: 3000, default: 500 },
+            duration: { power: 5000, attack: 4000, unitLost: 4000, buildingDestroyed: 5000, default: 3000 },
+            maxGrouped: 5,
+            groupWindow: 2000
+        };
     }
     
-    lastNotification = message;
-    lastNotificationTime = now;
-    
-    const container = document.getElementById('notifications');
-    const notification = document.createElement('div');
-    notification.className = 'notification';
-    notification.textContent = message;
-    container.appendChild(notification);
-
-    setTimeout(() => {
-        notification.remove();
-        // Clear last notification if this one is being removed
-        if (lastNotification === message) {
-            lastNotification = null;
+    show(type, message, options = {}) {
+        const now = Date.now();
+        const cooldown = this.config.cooldown[type] || this.config.cooldown.default;
+        const duration = options.duration || this.config.duration[type] || this.config.duration.default;
+        const location = options.location; // {x, y} world coordinates
+        const entity = options.entity; // Entity reference for click-to-navigate
+        
+        // Check cooldown for this notification type
+        const lastTime = this.lastNotificationByType.get(type);
+        if (lastTime && (now - lastTime) < cooldown) {
+            // Still in cooldown - try to group with existing notification
+            if (this.groupedNotifications.has(type)) {
+                const group = this.groupedNotifications.get(type);
+                if (now - group.time < this.config.groupWindow) {
+                    group.count++;
+                    group.locations.push(location || (entity ? {x: entity.x, y: entity.y} : null));
+                    // Update existing notification
+                    this.updateGroupedNotification(type, group);
+                    return;
+                }
+            }
+            return; // Skip if in cooldown and can't group
         }
-    }, duration);
+        
+        // Check if we should group with existing notification
+        if (this.groupedNotifications.has(type)) {
+            const group = this.groupedNotifications.get(type);
+            if (now - group.time < this.config.groupWindow) {
+                group.count++;
+                group.locations.push(location || (entity ? {x: entity.x, y: entity.y} : null));
+                this.updateGroupedNotification(type, group);
+                return;
+            }
+        }
+        
+        // Create new notification
+        this.lastNotificationByType.set(type, now);
+        
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        
+        // Make clickable if location is provided
+        if (location || entity) {
+            notification.classList.add('notification-clickable');
+            notification.style.cursor = 'pointer';
+            notification.title = 'Click to navigate to location';
+            
+            const targetLocation = location || {x: entity.x, y: entity.y};
+            notification.addEventListener('click', () => {
+                this.navigateToLocation(targetLocation);
+            });
+        }
+        
+        notification.textContent = message;
+        this.container.appendChild(notification);
+        this.activeNotifications.push({element: notification, type, time: now});
+        
+        // Initialize grouping if this is a groupable type
+        if (['attack', 'unitLost', 'buildingDestroyed'].includes(type)) {
+            this.groupedNotifications.set(type, {
+                count: 1,
+                time: now,
+                locations: [location || (entity ? {x: entity.x, y: entity.y} : null)],
+                element: notification
+            });
+        }
+        
+        // Auto-remove after duration
+        setTimeout(() => {
+            notification.remove();
+            this.activeNotifications = this.activeNotifications.filter(n => n.element !== notification);
+            
+            // Clear grouping if this was the grouped notification
+            if (this.groupedNotifications.has(type)) {
+                const group = this.groupedNotifications.get(type);
+                if (group.element === notification) {
+                    this.groupedNotifications.delete(type);
+                }
+            }
+        }, duration);
+    }
+    
+    updateGroupedNotification(type, group) {
+        if (!group.element || !group.element.parentNode) return;
+        
+        const count = Math.min(group.count, this.config.maxGrouped);
+        const entityName = type === 'unitLost' ? 'unit' : type === 'buildingDestroyed' ? 'building' : 'entity';
+        const plural = count > 1 ? 's' : '';
+        
+        let message;
+        if (type === 'attack') {
+            message = `${count} ${entityName}${plural} under attack!`;
+        } else if (type === 'unitLost') {
+            message = `${count} unit${plural} lost!`;
+        } else if (type === 'buildingDestroyed') {
+            message = `${count} building${plural} destroyed!`;
+        } else {
+            message = `${count} ${entityName}${plural} affected`;
+        }
+        
+        if (group.count > this.config.maxGrouped) {
+            message += ` (+${group.count - this.config.maxGrouped} more)`;
+        }
+        
+        group.element.textContent = message;
+        
+        // Update click handler to navigate to first location
+        if (group.locations.length > 0 && group.locations[0]) {
+            const firstLocation = group.locations[0];
+            group.element.onclick = () => {
+                this.navigateToLocation(firstLocation);
+            };
+        }
+    }
+    
+    navigateToLocation(location) {
+        if (!location || !this.game) return;
+        
+        // Center camera on location
+        this.game.camera.x = location.x - this.game.canvas.width / 2;
+        this.game.camera.y = location.y - this.game.canvas.height / 2;
+        this.game.constrainCamera();
+    }
+    
+    // Convenience methods
+    showPowerWarning(ratio) {
+        const percentage = Math.floor(ratio * 100);
+        let message;
+        if (ratio < 0.5) {
+            message = `⚠️ CRITICAL: Power at ${percentage}% - Build more Power Plants!`;
+        } else if (ratio < 0.75) {
+            message = `⚠️ Warning: Power at ${percentage}% - Low power!`;
+        } else {
+            message = `Power at ${percentage}%`;
+        }
+        const duration = this.config.duration.power;
+        this.show('power', message, { duration });
+    }
+    
+    showUnitAttacked(unit) {
+        if (!unit || !unit.owner || unit.owner.isAI) return;
+        const name = unit.stats?.name || unit.type || 'Unit';
+        const duration = this.config.duration.attack;
+        this.show('attack', `${name} under attack!`, {
+            entity: unit,
+            location: {x: unit.x, y: unit.y},
+            duration
+        });
+    }
+    
+    showBuildingAttacked(building) {
+        if (!building || !building.owner || building.owner.isAI) return;
+        const name = building.stats?.name || building.type || 'Building';
+        const duration = this.config.duration.attack;
+        this.show('attack', `${name} under attack!`, {
+            entity: building,
+            location: {x: building.x, y: building.y},
+            duration
+        });
+    }
+    
+    showUnitLost(unit) {
+        if (!unit || !unit.owner || unit.owner.isAI) return;
+        const name = unit.stats?.name || unit.type || 'Unit';
+        const duration = this.config.duration.unitLost;
+        this.show('unitLost', `${name} lost!`, {
+            entity: unit,
+            location: {x: unit.x, y: unit.y},
+            duration
+        });
+    }
+    
+    showBuildingDestroyed(building) {
+        if (!building || !building.owner || building.owner.isAI) return;
+        const name = building.stats?.name || building.type || 'Building';
+        const duration = this.config.duration.buildingDestroyed;
+        this.show('buildingDestroyed', `${name} destroyed!`, {
+            entity: building,
+            location: {x: building.x, y: building.y},
+            duration
+        });
+    }
+}
+
+// Global notification manager instance (will be initialized by Game)
+let notificationManager = null;
+
+// Legacy function for backward compatibility
+function showNotification(message, duration = 3000) {
+    if (notificationManager) {
+        notificationManager.show('default', message, {duration});
+    } else {
+        // Fallback if notification manager not initialized
+        const container = document.getElementById('notifications');
+        const notification = document.createElement('div');
+        notification.className = 'notification';
+        notification.textContent = message;
+        container.appendChild(notification);
+        setTimeout(() => notification.remove(), duration);
+    }
 }
 
 function playSound(type) {
