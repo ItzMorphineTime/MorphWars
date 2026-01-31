@@ -1,5 +1,9 @@
 # 🎮 Morph Wars - RTS Game
 
+<p align="center">
+  <img src="assets/sprites/Example.png" alt="The Shattered Seas" width="480">
+</p>
+
 [![Play Now](https://img.shields.io/badge/Play-Now-brightgreen?style=for-the-badge)](https://itzmorphinetime.github.io/MorphWars/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-yellow.svg?style=flat-square&logo=javascript)](https://www.javascript.com/)
@@ -42,6 +46,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 
 ### 🏗️ **Strategic Building System**
 - **15 Building Types** - Economy, production, defense, naval, and superweapons
+- **Multiple HQs** - Deploy additional HQs by building MCVs from War Factory and deploying them anywhere on the map
 - **Construction Time** - Buildings require time to become operational
 - **Power-based Speed**:
   - Low Power (<100%): 25% construction speed
@@ -81,6 +86,8 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Transport Systems**:
   - **APC (Armored Personnel Carrier)** - Embark up to 5 infantry units for rapid transport
   - **Transport Ships** - Naval transport with capacity-based unit loading (50 capacity points)
+  - **APCs and MCVs can embark on Transport Ships** - Ground vehicles load onto naval transports for amphibious operations
+  - Ground units path to coastline when embarking on naval transports (can't path to water)
   - Manual embark/disembark commands with visual indicators
   - Automatic disembark when transport is destroyed
   - **Embarked units are protected** - Cannot be targeted by enemies while inside transport
@@ -88,10 +95,10 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - **Mammoth Tank** - Advanced tech super-heavy tank with explosive rounds
   - **Airplanes** - Airfield-based aircraft with fly-by attacks and ammo management
   - **Naval Units** - Submarines (stealth), Warships (long-range), Transport Ships
-  - Harvesters with intelligent resource seeking
+  - Harvesters with intelligent resource seeking (find nodes closest to assigned refinery)
   - Medics for infantry healing
   - Artillery with splash damage
-  - Helicopters with ammo management
+  - Helicopters with ammo management (can pathfind over water)
 
 ### 🤖 **Advanced AI**
 - **3 Difficulty Levels** (Easy, Medium, Hard)
@@ -119,7 +126,8 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - Damages friendly units and buildings (use with caution!)
 
 ### 🎨 **Polish & Quality of Life**
-- **Custom PNG Sprite System** - Beautiful sprite rendering for units and buildings:
+- **Custom PNG Sprite System** - Beautiful sprite rendering for units and buildings (see [Assets & Sprites](#-assets--sprites)):
+  - Sprite assets in `assets/sprites/units/` and `assets/sprites/buildings/`
   - Sprite loading and caching system
   - Smooth rotation based on movement and combat direction
   - Player color tinting for team identification
@@ -144,7 +152,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Unit Formations** - Create and manage formations with hotkeys (1-4)
 - **Control Groups** - Assign units to groups (Ctrl+Shift+1-9) and select them (Alt+1-9)
 - **Unit Selection** - Ctrl+A to select all units, double-click to select all units of same type
-- **Camera Controls** - Smooth camera following, presets (Ctrl+F1-F4 to jump, Shift+Ctrl+F1-F4 to save), edge scrolling, minimap click navigation
+- **Camera Controls** - Presets (Ctrl+F1-F4 to jump, Shift+Ctrl+F1-F4 to save), edge scrolling, minimap click navigation, middle mouse pan
 - **Attack Move** - Aggressive unit positioning
 - **Repair Bays** - Automatic vehicle healing
 - **Game Statistics** - Track units built, killed, money earned, and more
@@ -220,7 +228,8 @@ That's it! No build process, no npm install, no dependencies.
 
 #### Transport Commands
 - **Right-Click APC** (with infantry selected) - Embark infantry into APC
-- **Right-Click Transport** (with transport selected) - Disembark all units at current location
+- **Right-Click Transport Ship** (with infantry, APC, or MCV selected) - Embark onto naval transport (bring transport to coast first)
+- **Right-Click Transport** (with transport selected, hovering over itself) - Disembark all units at current location
 - **Disembark Button** - Click in selection panel when transport is selected
 
 ### Map Editor Controls
@@ -237,7 +246,7 @@ That's it! No build process, no npm install, no dependencies.
 - **Middle Mouse / Ctrl+Drag** - Pan camera
 
 ### Getting Started
-1. Deploy your MCV (Mobile Construction Vehicle) to create your base
+1. Deploy your MCV (Mobile Construction Vehicle) to create your base (build more MCVs from War Factory to deploy additional HQs)
 2. Build Power Plants to generate energy
 3. Construct Refineries and Harvesters to gather resources
 4. Build Barracks/War Factory to produce military units
@@ -260,6 +269,7 @@ That's it! No build process, no npm install, no dependencies.
 - 🗺️ Create custom maps with the Map Editor - design unique battlefields and scenarios
 - 🚢 Build PORTs on water for naval production - they work even when entirely in water
 - 🚛 Use APCs to rapidly transport infantry across the map (embarked units are protected from targeting)
+- 🚢 MCVs and APCs can load onto Transport Ships - bring transport to coast, then right-click to embark
 - ⚓ Naval units can approach coastlines (within 1 tile) to attack land targets
 - 🎯 Control groups (Ctrl+Shift+1-9) help manage large armies efficiently
 - 🎨 Combat visual effects provide feedback on damage and attacks
@@ -268,6 +278,7 @@ That's it! No build process, no npm install, no dependencies.
 - ⌨️ Building hotkeys (P, R, B, W, A, G, T) speed up base construction
 - ⚡ Tesla Coils require massive power (150) - ensure sufficient power generation
 - 🎨 Toggle sprites on/off in settings for performance or visual preference
+- 🖼️ Replace PNGs in `assets/sprites/` to customize unit and building visuals (see Assets & Sprites section)
 - 📢 Click notifications to navigate to important events (attacks, losses)
 - 🛡️ Power-dependent defenses (Tesla Coil, AA Turret) won't attack without power
 - 🗺️ Minimap requires both Radar Dome AND sufficient power to function
@@ -306,8 +317,12 @@ That's it! No build process, no npm install, no dependencies.
 ```
 Game/
 ├── index.html              # Main entry point
+├── assets/
+│   └── sprites/            # PNG sprite assets (see Assets & Sprites below)
+│       ├── buildings/      # Building sprites (HQ, Refinery, Turrets, etc.)
+│       └── units/          # Unit sprites (Tanks, APC, Harvester, Naval, etc.)
 ├── js/
-│   ├── constants.js        # Game configuration & balance
+│   ├── constants.js        # Game configuration & balance (sprite paths)
 │   ├── perlin.js           # Perlin noise generator
 │   ├── map.js              # Heightmap & terrain generation
 │   ├── entity.js           # Base entity class
@@ -331,6 +346,53 @@ Game/
 │   └── main.js             # Initialization
 └── README.md
 ```
+
+---
+
+## 🎨 Assets & Sprites
+
+The game uses PNG sprites for units and buildings. Sprite paths are configured in `js/constants.js`. Add or replace files in `assets/sprites/` to customize visuals.
+
+### Unit Sprites (`assets/sprites/units/`)
+
+| Sprite | File | Unit | Notes |
+|:------:|------|------|-------|
+| ![Harvester](assets/sprites/units/harvester.png) | `harvester.png` | Harvester | Resource gathering vehicle |
+| ![Light Tank](assets/sprites/units/light_tank.png) | `light_tank.png` | Light Tank | Tier 1 combat vehicle |
+| ![Medium Tank](assets/sprites/units/medium_tank.png) | `medium_tank.png` | Medium Tank | Tier 2 combat vehicle |
+| ![APC](assets/sprites/units/apc.png) | `apc.png` | APC | Infantry transport (5 capacity) |
+| ![Heavy Tank](assets/sprites/units/heavy_tank.png) | `heavy_tank.png` | Heavy Tank | Tier 3 combat vehicle |
+| ![Mammoth Tank](assets/sprites/units/mammoth_tank.png) | `mammoth_tank.png` | Mammoth Tank | Super-heavy with explosive rounds |
+| ![Artillery](assets/sprites/units/artillery.png) | `artillery.png` | Artillery | Long-range splash damage |
+| ![Transport Ship](assets/sprites/units/transport_ship.png) | `transport_ship.png` | Transport Ship | Naval transport (50 capacity) |
+| ![Warship](assets/sprites/units/warship.png) | `warship.png` | Warship | Naval combat unit |
+
+*Infantry, helicopters, airplanes, MCV, and submarines use fallback colored rectangles if no sprite is configured.*
+
+### Building Sprites (`assets/sprites/buildings/`)
+
+| Sprite | File | Building | Notes |
+|:------:|------|----------|-------|
+| ![HQ](assets/sprites/buildings/hq.png) | `hq.png` | HQ | Headquarters (deployed from MCV) |
+| ![Power Plant](assets/sprites/buildings/power_plant.png) | `power_plant.png` | Power Plant | Power generation |
+| ![Refinery](assets/sprites/buildings/refinery.png) | `refinery.png` | Refinery | Resource processing, spawns harvesters |
+| ![Barracks](assets/sprites/buildings/barracks.png) | `barracks.png` | Barracks | Infantry production |
+| ![War Factory](assets/sprites/buildings/war_factory.png) | `war_factory.png` | War Factory | Vehicle production (including MCV) |
+| ![Airfield](assets/sprites/buildings/airfield.png) | `airfield.png` | Airfield | Air unit production |
+| ![Gun Turret Base](assets/sprites/buildings/gun_turret_base.png) | `gun_turret_base.png` | Gun Turret | Base structure |
+| ![Gun Turret](assets/sprites/buildings/gun_turret_turret.png) | `gun_turret_turret.png` | Gun Turret | Rotating turret (separate layer) |
+| ![AA Turret Base](assets/sprites/buildings/aa_turret_base.png) | `aa_turret_base.png` | AA Turret | Base structure |
+| ![AA Turret](assets/sprites/buildings/aa_turret_turret.png) | `aa_turret_turret.png` | AA Turret | Rotating turret (separate layer) |
+| ![PORT](assets/sprites/buildings/port.png) | `port.png` | PORT | Naval production (water placement) |
+| ![Radar Dome](assets/sprites/buildings/radar_dome.png) | `radar_dome.png` | Radar Dome | Enables minimap (requires power) |
+
+*Turret buildings use two sprites: a base and a separate rotating turret for directional aiming.*
+
+### Sprite Requirements
+- **Format**: PNG with transparency
+- **Orientation**: Default facing downward (rotation applied at runtime)
+- **Sizing**: Configured per-unit in `constants.js` (e.g., `size: { width: 48, height: 48 }`)
+- **Tinting**: Player colors applied via multiply blend (configurable per sprite)
 
 ---
 
