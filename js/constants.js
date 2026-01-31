@@ -787,6 +787,9 @@ const BUILDING_TYPES = {
         name: 'Port',
         cost: 3000,
         hp: 1000,
+        isPort: true,
+        repairRate: 5,
+        repairRange: 4, // Heals naval units on/near the port
         sprite: {
             path: 'assets/sprites/buildings/port.png',
             size: { width: 96, height: 64 },

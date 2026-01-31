@@ -58,6 +58,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
   - Can be built on water or adjacent to water
   - Produces submarines, warships, and transport ships
   - Allows units on top (no collision)
+  - **Heals naval ships** when docked on or near the port
   - Works even when built entirely in water
 - **Tesla Coil** - Advanced defensive structure:
   - Requires Tier 2 (Advanced Tech)
@@ -154,7 +155,7 @@ A feature-rich, real-time strategy game, built entirely with vanilla JavaScript 
 - **Unit Selection** - Ctrl+A to select all units, double-click to select all units of same type
 - **Camera Controls** - Presets (Ctrl+F1-F4 to jump, Shift+Ctrl+F1-F4 to save), edge scrolling, minimap click navigation, middle mouse pan
 - **Attack Move** - Aggressive unit positioning
-- **Repair Bays** - Automatic vehicle healing
+- **Repair Bays** - Automatic vehicle, air, and naval unit healing (naval ships when near coast)
 - **Game Statistics** - Track units built, killed, money earned, and more
 - **Settings Modal** - Comprehensive game options and controls reference:
   - Sprite toggle (enable/disable sprite rendering)
@@ -267,10 +268,11 @@ That's it! No build process, no npm install, no dependencies.
 - 📊 Save your game frequently - multiple save slots available
 - 🎖️ Formations help coordinate large armies - use hotkeys 1-4
 - 🗺️ Create custom maps with the Map Editor - design unique battlefields and scenarios
-- 🚢 Build PORTs on water for naval production - they work even when entirely in water
+- 🚢 Build PORTs on water for naval production - they work even when entirely in water and heal naval ships docked on/near them
 - 🚛 Use APCs to rapidly transport infantry across the map (embarked units are protected from targeting)
 - 🚢 MCVs and APCs can load onto Transport Ships - bring transport to coast, then right-click to embark
 - ⚓ Naval units can approach coastlines (within 1 tile) to attack land targets
+- 🔧 Repair Bays and Ports heal naval ships - dock damaged ships at ports or near coastal Repair Bays
 - 🎯 Control groups (Ctrl+Shift+1-9) help manage large armies efficiently
 - 🎨 Combat visual effects provide feedback on damage and attacks
 - 🚜 Harvesters automatically avoid each other - build multiple refineries near resource clusters

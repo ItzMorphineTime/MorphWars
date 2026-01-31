@@ -54,9 +54,14 @@ class Building extends Entity {
             this.updateDefense(deltaTime, game);
         }
 
-        // Repair Bay repairs vehicles/air units (only if operational)
+        // Repair Bay repairs vehicles/air/naval units (only if operational)
         if (this.stats.isRepairBay && this.isOperational) {
             this.updateRepairBay(deltaTime, game);
+        }
+
+        // Port repairs naval units on/near the port (only if operational)
+        if (this.stats.isPort && this.isOperational) {
+            this.updatePortHealing(deltaTime, game);
         }
     }
 
@@ -556,10 +561,28 @@ class Building extends Entity {
         const repairRange = (this.stats.repairRange || 3) * TILE_SIZE;
         const repairRate = this.stats.repairRate || 5;
 
-        // Find nearby damaged vehicles/air units
+        // Find nearby damaged vehicles/air/naval units
         for (const unit of game.units) {
             if (unit.owner !== this.owner || !unit.isAlive()) continue;
-            if (unit.stats.category !== 'vehicle' && unit.stats.category !== 'air') continue;
+            if (unit.stats.category !== 'vehicle' && unit.stats.category !== 'air' && unit.stats.category !== 'naval') continue;
+            if (unit.getHealthPercent() >= 1.0) continue;
+
+            const dist = distance(this.x, this.y, unit.x, unit.y);
+            if (dist <= repairRange) {
+                unit.heal(repairRate * (deltaTime / 1000));
+                break; // Repair one unit at a time
+            }
+        }
+    }
+
+    updatePortHealing(deltaTime, game) {
+        const repairRange = (this.stats.repairRange || 4) * TILE_SIZE; // Port footprint + adjacent water
+        const repairRate = this.stats.repairRate || 5;
+
+        // Find damaged naval units on/near the port
+        for (const unit of game.units) {
+            if (unit.owner !== this.owner || !unit.isAlive()) continue;
+            if (unit.stats.category !== 'naval') continue;
             if (unit.getHealthPercent() >= 1.0) continue;
 
             const dist = distance(this.x, this.y, unit.x, unit.y);
