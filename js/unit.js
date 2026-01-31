@@ -384,9 +384,11 @@ class Unit extends Entity {
 
             let canMove;
             if (ignoresCollision) {
-                // Helicopters check terrain and other helicopters only
+                // Helicopters can fly over water - water tiles are passable (blocked=true for ground units only)
                 const otherHelicopter = targetTile && targetTile.unit && targetTile.unit !== this && targetTile.unit.stats.category === 'air';
-                canMove = targetTile && !targetTile.blocked && !otherHelicopter;
+                const isWaterTile = targetTile && game.map.isWater(newTile.x, newTile.y);
+                const tileIsPassable = targetTile && (isWaterTile || !targetTile.blocked);
+                canMove = tileIsPassable && !otherHelicopter;
             } else if (this.isHarvester) {
                 // Harvesters can pass through other harvesters - no collision between harvesters
                 // But still respect terrain and buildings

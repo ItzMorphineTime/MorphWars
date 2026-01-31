@@ -465,7 +465,7 @@ const UNIT_TYPES = {
         canAttackGround: true, // Can attack ground units near coast
         sprite: {
             path: 'assets/sprites/units/warship.png',
-            size: { width: 96, height: 48 },
+            size: { width: 48, height: 96 },
             rotation: {
                 enabled: true,
                 useAngle: false,
@@ -491,11 +491,11 @@ const UNIT_TYPES = {
         size: 3,
         isNaval: true,
         isTransport: true,
-        transportCapacity: 50, // Total capacity points (infantry = 1, vehicles = 3, etc.)
+        transportCapacity: 15, // Total capacity points (infantry = 1, vehicles = 3, etc.)
         transportType: 'all', // Can transport any unit type
         sprite: {
             path: 'assets/sprites/units/transport_ship.png',
-            size: { width: 96, height: 48 },
+            size: { width: 48, height: 96 },
             rotation: {
                 enabled: true,
                 useAngle: false,
