@@ -71,7 +71,7 @@ class SpatialGrid {
     }
     
     // Check if a specific tile is blocked (fast lookup)
-    isTileBlocked(x, y, size = 1, isHarvester = false, isNaval = false) {
+    isTileBlocked(x, y, size = 1, isHarvester = false, isNaval = false, isAir = false) {
         if (this.dirty) {
             this.buildGrid();
         }
@@ -99,8 +99,8 @@ class SpatialGrid {
                     return true;
                 }
                 
-                // Non-naval units cannot move on water (unless transported)
-                if (!isNaval && this.map.isWater(checkX, checkY)) {
+                // Non-naval, non-air units cannot move on water (air units fly over)
+                if (!isNaval && !isAir && this.map.isWater(checkX, checkY)) {
                     return true;
                 }
                 

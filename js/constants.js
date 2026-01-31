@@ -463,6 +463,20 @@ const UNIT_TYPES = {
         size: 3,
         isNaval: true,
         canAttackGround: true, // Can attack ground units near coast
+        sprite: {
+            path: 'assets/sprites/units/warship.png',
+            size: { width: 96, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
     TRANSPORT_SHIP: {
         name: 'Transport Ship',
@@ -479,6 +493,20 @@ const UNIT_TYPES = {
         isTransport: true,
         transportCapacity: 50, // Total capacity points (infantry = 1, vehicles = 3, etc.)
         transportType: 'all', // Can transport any unit type
+        sprite: {
+            path: 'assets/sprites/units/transport_ship.png',
+            size: { width: 96, height: 48 },
+            rotation: {
+                enabled: true,
+                useAngle: false,
+                snapToDirections: 0
+            },
+            tinting: {
+                enabled: true,
+                method: 'multiply',
+                intensity: 0.4
+            }
+        },
     },
 };
 

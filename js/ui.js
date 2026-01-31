@@ -486,20 +486,14 @@ class UIController {
             return;
         }
 
-        // Priority 2: If MCV selected without HQ, show deploy button
-        if (selected.length === 1 && currentEntity instanceof Unit && currentEntity.stats.isBuilder && !hasHQ) {
+        // Priority 2: If MCV selected, show deploy button (allows multiple HQs from War Factory MCVs)
+        if (selected.length === 1 && currentEntity instanceof Unit && currentEntity.stats.isBuilder) {
             this.showDeployMenu();
             return;
         }
 
-        // Priority 3: If HQ exists, always show base building menu
+        // Priority 3: If HQ exists, show base building menu
         if (hasHQ) {
-            this.showBuildingMenu();
-            return;
-        }
-
-        // Priority 4: If MCV selected with HQ, show building menu
-        if (selected.length === 1 && currentEntity instanceof Unit && currentEntity.stats.isBuilder && hasHQ) {
             this.showBuildingMenu();
             return;
         }

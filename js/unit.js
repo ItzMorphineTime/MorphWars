@@ -146,7 +146,8 @@ class Unit extends Entity {
         } else {
             // Can pathfind now
             this.lastPathfindingTime = now;
-            this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval);
+            const isAir = this.stats.category === 'air';
+            this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval, isAir);
             this.pathIndex = 0;
             this.pendingPathRequest = null;
 
@@ -230,8 +231,9 @@ class Unit extends Entity {
             if (timeSinceLastPath >= throttleInterval) {
                 // Throttle expired - process pending request
                 const currentTile = worldToTile(this.x, this.y);
+                const isAir = this.stats.category === 'air';
                 this.path = findPath(game.map, currentTile.x, currentTile.y, 
-                    this.pendingPathRequest.endX, this.pendingPathRequest.endY, this.stats.size, this.isHarvester);
+                    this.pendingPathRequest.endX, this.pendingPathRequest.endY, this.stats.size, this.isHarvester, this.isNaval, isAir);
                 this.pathIndex = 0;
                 this.lastPathfindingTime = now;
                 this.pendingPathRequest = null;
@@ -521,7 +523,8 @@ class Unit extends Entity {
                                 const worldPos = tileToWorld(emptyTile.x, emptyTile.y);
                                 this.targetX = worldPos.x;
                                 this.targetY = worldPos.y;
-                                this.path = findPath(game.map, oldTile.x, oldTile.y, emptyTile.x, emptyTile.y, this.stats.size, this.isHarvester);
+                                const isAir = this.stats.category === 'air';
+                                this.path = findPath(game.map, oldTile.x, oldTile.y, emptyTile.x, emptyTile.y, this.stats.size, this.isHarvester, this.isNaval, isAir);
                                 this.pathIndex = 0;
                             }
                         }
@@ -580,7 +583,8 @@ class Unit extends Entity {
 
                     if (this.repathAttempts < 10) {
                         const destTile = this.path[this.path.length - 1];
-                        this.path = findPath(game.map, oldTile.x, oldTile.y, destTile.x, destTile.y, this.stats.size, this.isHarvester);
+                        const isAir = this.stats.category === 'air';
+                        this.path = findPath(game.map, oldTile.x, oldTile.y, destTile.x, destTile.y, this.stats.size, this.isHarvester, this.isNaval, isAir);
                         this.pathIndex = 0;
                     } else {
                         this.path = null;
@@ -630,7 +634,8 @@ class Unit extends Entity {
             if (needsNewPath && cooldownExpired && throttleExpired) {
                 const currentTile = worldToTile(this.x, this.y);
                 const targetTile = worldToTile(this.targetEnemy.x, this.targetEnemy.y);
-                this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval);
+                const isAir = this.stats.category === 'air';
+                this.path = findPath(game.map, currentTile.x, currentTile.y, targetTile.x, targetTile.y, this.stats.size, this.isHarvester, this.isNaval, isAir);
                 this.pathIndex = 0;
                 this.lastCombatPathTime = now;
                 this.lastPathfindingTime = now; // Update general pathfinding throttle too
@@ -925,7 +930,16 @@ class Unit extends Entity {
     findNearestResource(game) {
         let nearest = null;
         let nearestDist = Infinity;
+        let nearestHarvesterCount = Infinity;
         const MAX_HARVESTERS_PER_NODE = 2;
+
+        // Use home refinery position when choosing node - spreads harvesters across nodes near their refinery
+        const refX = (this.homeRefinery && this.homeRefinery.isAlive())
+            ? this.homeRefinery.x / TILE_SIZE
+            : this.x / TILE_SIZE;
+        const refY = (this.homeRefinery && this.homeRefinery.isAlive())
+            ? this.homeRefinery.y / TILE_SIZE
+            : this.y / TILE_SIZE;
 
         for (const node of game.map.resourceNodes) {
             if (node.resources <= 0) continue;
@@ -937,14 +951,15 @@ class Unit extends Entity {
                 continue; // Skip this node - already at capacity
             }
 
-            const dist = distance(
-                this.x / TILE_SIZE, this.y / TILE_SIZE,
-                node.x, node.y
-            );
+            const dist = distance(refX, refY, node.x, node.y);
 
-            if (dist < nearestDist) {
+            // Prefer closer nodes; when distances are similar (within 1.5 tiles), prefer less crowded nodes
+            const distSimilar = Math.abs(dist - nearestDist) < 1.5;
+            const lessCrowded = harvesterCount < nearestHarvesterCount;
+            if (dist < nearestDist || (distSimilar && lessCrowded)) {
                 nearest = node;
                 nearestDist = dist;
+                nearestHarvesterCount = harvesterCount;
             }
         }
 

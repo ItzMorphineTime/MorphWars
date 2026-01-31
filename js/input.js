@@ -183,15 +183,22 @@ class InputHandler {
         // Check for embark/disembark opportunities
         const target = this.findEntityAt(this.mouseWorldX, this.mouseWorldY);
         const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit);
-        const hasNonTransportSelected = selectedUnits.some(u => !u.isTransport && !u.transportedBy);
         const hasTransportSelected = selectedUnits.some(u => u.isTransport);
+        // Units that can embark: not transported, and either non-transport OR ground transport (APC) loading onto naval transport
+        const hasEmbarkableSelected = selectedUnits.some(u => {
+            if (u.transportedBy) return false;
+            if (!u.isTransport) return true;
+            return target instanceof Unit && target.isTransport && target.isNaval; // APC can load onto transport ship
+        });
         
         // Check for embark: Selected units over a transport
-        if (hasNonTransportSelected && target instanceof Unit && target.isTransport && 
+        if (hasEmbarkableSelected && target instanceof Unit && target.isTransport && 
             target.owner === this.game.humanPlayer && !selectedUnits.includes(target)) {
             // Check if any selected unit can embark
             const canEmbark = selectedUnits.some(unit => {
-                if (unit.transportedBy || unit.isTransport) return false;
+                if (unit.transportedBy) return false;
+                if (unit === target) return false; // Can't embark onto self
+                if (unit.isTransport && unit.isNaval) return false; // Naval transport can't load onto another
                 if (target.transportType === 'infantry' && unit.stats.category !== 'infantry') return false;
                 if (target.transportType === 'all' && target.isNaval) {
                     const unitSize = Math.ceil(unit.stats.size || 1);
@@ -727,22 +734,28 @@ class InputHandler {
         // Handle embark/disembark commands
         const selectedUnits = this.game.selectedEntities.filter(e => e instanceof Unit);
         const hasTransportSelected = selectedUnits.some(u => u.isTransport);
-        const hasNonTransportSelected = selectedUnits.some(u => !u.isTransport && !u.transportedBy);
+        // Units that can embark: not transported, and either non-transport OR ground transport (APC) loading onto naval transport
+        const hasEmbarkableSelected = selectedUnits.some(u => {
+            if (u.transportedBy) return false;
+            if (!u.isTransport) return true;
+            return target instanceof Unit && target.isTransport && target.isNaval;
+        });
         
         // Check for embark: Selected units right-clicking on a transport
-        // Allow both: units selected clicking on transport, OR transport selected clicking on itself
         const isClickingOnTransport = target instanceof Unit && target.isTransport && target.owner === this.game.humanPlayer;
         const isTransportSelected = hasTransportSelected && selectedUnits.length === 1 && selectedUnits[0].isTransport;
         const isClickingOnSelectedTransport = isClickingOnTransport && isTransportSelected && target === selectedUnits[0];
         
-        if (hasNonTransportSelected && isClickingOnTransport) {
+        if (hasEmbarkableSelected && isClickingOnTransport) {
             
             let embarkedCount = 0;
             let failedCount = 0;
             
             for (const unit of selectedUnits) {
-                // Skip if unit is already transported or is a transport itself
-                if (unit.transportedBy || unit.isTransport) continue;
+                // Skip if already transported or trying to embark onto self
+                if (unit.transportedBy || unit === target) continue;
+                // Naval transports cannot load onto another transport
+                if (unit.isTransport && unit.isNaval) continue;
                 
                 // Check if unit can be transported
                 if (target.transportType === 'infantry' && unit.stats.category !== 'infantry') {
@@ -767,8 +780,10 @@ class InputHandler {
                 }
                 
                 // Check distance - allow units to move closer if needed
+                // Naval transports: use 4 tiles (transport at coast, unit on land adjacent)
+                const embarkRange = target.isNaval ? TILE_SIZE * 4 : TILE_SIZE * 3;
                 const dist = distance(unit.x, unit.y, target.x, target.y);
-                if (dist < TILE_SIZE * 3) { // Within 3 tiles (increased from 2)
+                if (dist < embarkRange) {
                     if (target.embarkUnit(unit, this.game)) {
                         embarkedCount++;
                     } else {
@@ -776,7 +791,17 @@ class InputHandler {
                     }
                 } else {
                     // Unit is too far - move it closer first
-                    unit.moveTo(target.x, target.y, this.game);
+                    // For naval transports, ground units must path to coastline (can't path to water)
+                    let moveX = target.x, moveY = target.y;
+                    if (target.isNaval && !unit.isNaval) {
+                        const coastTile = findNearestCoastlineToPosition(this.game.map, Math.floor(target.x / TILE_SIZE), Math.floor(target.y / TILE_SIZE));
+                        if (coastTile) {
+                            const worldPos = tileToWorld(coastTile.x, coastTile.y);
+                            moveX = worldPos.x;
+                            moveY = worldPos.y;
+                        }
+                    }
+                    unit.moveTo(moveX, moveY, this.game);
                     // Don't count as failed, just move closer
                 }
             }

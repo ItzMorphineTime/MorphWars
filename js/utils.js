@@ -122,7 +122,7 @@ function canPlaceBuilding(map, x, y, width, height, player, game, allowWater = f
     return true;
 }
 
-function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
+function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false, isAir = false) {
     // Validate inputs
     if (!validateMapCoordinates(map, startX, startY) || !validateMapCoordinates(map, endX, endY)) {
         return null;
@@ -139,8 +139,8 @@ function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false
         }
     }
     
-    // For non-naval units, validate that destination is not water
-    if (!isNaval && map.isWater(endX, endY)) {
+    // For non-naval, non-air units, validate that destination is not water
+    if (!isNaval && !isAir && map.isWater(endX, endY)) {
         return null; // Cannot pathfind to water destination
     }
 
@@ -159,9 +159,9 @@ function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false
     // Use hierarchical pathfinding for long distances
     const distanceTiles = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
     if (distanceTiles > PATHFINDING.HIERARCHICAL_THRESHOLD) {
-        result = findPathHierarchical(map, startX, startY, endX, endY, size, isHarvester, isNaval);
+        result = findPathHierarchical(map, startX, startY, endX, endY, size, isHarvester, isNaval, isAir);
     } else {
-        result = findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
+        result = findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval, isAir);
     }
 
     if (typeof profiler !== 'undefined' && profiler && profiler.enabled) {
@@ -172,7 +172,7 @@ function findPath(map, startX, startY, endX, endY, size = 1, isHarvester = false
 }
 
 // Hierarchical pathfinding for long distances
-function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
+function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false, isAir = false) {
     const distanceTiles = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
     const waypointDistance = PATHFINDING.WAYPOINT_DISTANCE;
     
@@ -181,7 +181,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
     
     if (numWaypoints <= 1) {
         // Short path, use regular pathfinding
-        return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
+        return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval, isAir);
     }
 
     // Generate waypoints along the direct line
@@ -191,7 +191,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
         const wx = Math.floor(startX + (endX - startX) * t);
         const wy = Math.floor(startY + (endY - startY) * t);
         
-        // Find nearest valid tile for waypoint (consider naval units need water)
+        // Find nearest valid tile for waypoint (consider naval units need water, air units can use any)
         const validWaypoint = findNearestValidTile(map, wx, wy, size, isNaval ? 10 : 5, isNaval);
         if (validWaypoint) {
             // For naval units, ensure waypoint is on water
@@ -208,7 +208,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
     let currentY = startY;
 
     for (const waypoint of waypoints) {
-        const segmentPath = findPathDirect(map, currentX, currentY, waypoint.x, waypoint.y, size, isHarvester, isNaval);
+        const segmentPath = findPathDirect(map, currentX, currentY, waypoint.x, waypoint.y, size, isHarvester, isNaval, isAir);
         if (segmentPath && segmentPath.length > 0) {
             // Add segment path (skip first point to avoid duplicates)
             for (let i = 1; i < segmentPath.length; i++) {
@@ -218,7 +218,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
             currentY = waypoint.y;
         } else {
             // If waypoint fails, try direct path
-            const directPath = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval);
+            const directPath = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval, isAir);
             if (directPath) {
                 return directPath;
             }
@@ -227,7 +227,7 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
     }
 
     // Final segment to destination
-    const finalSegment = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval);
+    const finalSegment = findPathDirect(map, currentX, currentY, endX, endY, size, isHarvester, isNaval, isAir);
     if (finalSegment && finalSegment.length > 0) {
         for (let i = 1; i < finalSegment.length; i++) {
             fullPath.push(finalSegment[i]);
@@ -242,10 +242,10 @@ function findPathHierarchical(map, startX, startY, endX, endY, size = 1, isHarve
     }
 
     // Fallback to direct pathfinding
-    return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval);
+    return findPathDirect(map, startX, startY, endX, endY, size, isHarvester, isNaval, isAir);
 }
 
-function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false) {
+function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester = false, isNaval = false, isAir = false) {
     // This is the original findPath logic without hierarchical check
     const openSet = new Map();
     const closedSet = new Set();
@@ -320,28 +320,32 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester =
                 }
             }
 
-            // Use spatial grid for faster collision detection if available
-            if (map.spatialGrid) {
+            // Air units (helicopters) can fly over water - treat as passable
+            if (isAir && map.isWater(neighbor.x, neighbor.y)) {
+                // Water is passable for air units - only check building collision
+                const tile = map.getTile(neighbor.x, neighbor.y);
+                if (tile && tile.building && !tile.building.stats.allowsUnitsOnTop) {
+                    continue; // Blocked by building
+                }
+                // Valid for air - fall through to add to open set
+            } else if (map.spatialGrid) {
+                // Use spatial grid for faster collision detection
                 const isDestination = neighbor.x === endX && neighbor.y === endY;
-                // For destination, only check if it's valid for naval/non-naval movement
                 if (isDestination) {
                     if (isNaval && !map.isNavalValid(neighbor.x, neighbor.y)) {
                         continue; // Naval units must end on water or near coastlines
                     }
-                    if (!isNaval && map.isWater(neighbor.x, neighbor.y)) {
+                    if (!isNaval && !isAir && map.isWater(neighbor.x, neighbor.y)) {
                         continue; // Non-naval units cannot end on water
                     }
-                    // Destination is valid terrain-wise, allow it (even if blocked by units/buildings)
                 } else {
                     // For naval units, water tiles are valid even if marked as blocked
                     if (isNaval && map.isWater(neighbor.x, neighbor.y)) {
-                        // Water tile - check building collision only
                         const tile = map.getTile(neighbor.x, neighbor.y);
                         if (tile && tile.building && !tile.building.stats.allowsUnitsOnTop) {
                             continue; // Blocked by building
                         }
-                        // Water tile is valid for naval units, continue to next check
-                    } else if (map.spatialGrid.isTileBlocked(neighbor.x, neighbor.y, size, isHarvester, isNaval)) {
+                    } else if (map.spatialGrid.isTileBlocked(neighbor.x, neighbor.y, size, isHarvester, isNaval, isAir)) {
                         continue;
                     }
                 }
@@ -374,7 +378,7 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester =
                                 canFit = false;
                                 break;
                             }
-                            if (!isNaval && checkTile.terrain === 'water') {
+                            if (!isNaval && !isAir && checkTile.terrain === 'water') {
                                 canFit = false;
                                 break;
                             }
@@ -406,7 +410,7 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester =
                         if (isNaval && !map.isNavalValid(neighbor.x, neighbor.y)) {
                             continue; // Naval units must end on water or near coastlines
                         }
-                        if (!isNaval && map.isWater(neighbor.x, neighbor.y)) {
+                        if (!isNaval && !isAir && map.isWater(neighbor.x, neighbor.y)) {
                             continue; // Non-naval units cannot end on water
                         }
                     } else if ((tile.blocked || (tile.unit && tile.unit.size >= size && !tile.unit.isHarvester)) && !buildingAllowsUnits) {
@@ -438,6 +442,23 @@ function findPathDirect(map, startX, startY, endX, endY, size = 1, isHarvester =
         }
     }
 
+    return null;
+}
+
+function findNearestCoastlineToPosition(map, tileX, tileY, searchRadius = 8) {
+    // Find nearest coastline tile (land adjacent to water) for ground units to path toward naval transports
+    for (let r = 0; r <= searchRadius; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                if (Math.abs(dx) + Math.abs(dy) !== r) continue;
+                const tx = tileX + dx;
+                const ty = tileY + dy;
+                if (map.isCoastline && map.isCoastline(tx, ty)) {
+                    return { x: tx, y: ty };
+                }
+            }
+        }
+    }
     return null;
 }
 
